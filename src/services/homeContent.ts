@@ -1,8 +1,8 @@
 import {
+  arrayRemove,
   arrayUnion,
   collection,
   doc,
-  getDoc,
   getDocs,
   serverTimestamp,
   setDoc,
@@ -34,6 +34,22 @@ export type AgendaEventRecord = {
   updatedAt?: unknown;
 };
 
+export type HomePostRecord = {
+  id: string;
+  category: string;
+  title: string;
+  content: string;
+  author: string;
+  role: string;
+  imageUrl: string;
+  expirationDays: number;
+  createdByUid: string;
+  likedByUids: string[];
+  comments: HomeCommentRecord[];
+  createdAt?: unknown;
+  updatedAt?: unknown;
+};
+
 export type CreateAgendaEventInput = {
   kind: string;
   title: string;
@@ -45,8 +61,41 @@ export type CreateAgendaEventInput = {
   createdByUid: string;
 };
 
+export type CreateHomePostInput = {
+  category: string;
+  title: string;
+  content: string;
+  author: string;
+  role: string;
+  imageUrl: string;
+  expirationDays: number;
+  createdByUid: string;
+};
+
 function getAgendaEventsCollection() {
   return collection(firestoreDb, "agendaEvents");
+}
+
+function getHomePostsCollection() {
+  return collection(firestoreDb, "homePosts");
+}
+
+function resolveTimestampValue(value: unknown) {
+  if (value instanceof Date) {
+    return value.getTime();
+  }
+
+  if (typeof value === "object" && value !== null) {
+    if ("toDate" in value && typeof value.toDate === "function") {
+      return value.toDate().getTime();
+    }
+
+    if ("seconds" in value && typeof value.seconds === "number") {
+      return value.seconds * 1000;
+    }
+  }
+
+  return 0;
 }
 
 export async function listAgendaEvents() {
@@ -55,6 +104,14 @@ export async function listAgendaEvents() {
   return snapshot.docs
     .map((document) => document.data() as AgendaEventRecord)
     .sort((left, right) => `${left.scheduledDate}|${left.time}`.localeCompare(`${right.scheduledDate}|${right.time}`));
+}
+
+export async function listHomePosts() {
+  const snapshot = await getDocs(getHomePostsCollection());
+
+  return snapshot.docs
+    .map((document) => document.data() as HomePostRecord)
+    .sort((left, right) => resolveTimestampValue(right.createdAt) - resolveTimestampValue(left.createdAt));
 }
 
 export async function createAgendaEvent(input: CreateAgendaEventInput) {
@@ -78,13 +135,59 @@ export async function createAgendaEvent(input: CreateAgendaEventInput) {
     updatedAt: serverTimestamp(),
   });
 
-  const createdSnapshot = await getDoc(agendaReference);
-  return createdSnapshot.data() as AgendaEventRecord;
+  return {
+    ...payload,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  };
+}
+
+export async function createHomePost(input: CreateHomePostInput) {
+  const postReference = doc(getHomePostsCollection());
+  const payload: HomePostRecord = {
+    id: postReference.id,
+    category: input.category,
+    title: input.title,
+    content: input.content,
+    author: input.author,
+    role: input.role,
+    imageUrl: input.imageUrl,
+    expirationDays: input.expirationDays,
+    createdByUid: input.createdByUid,
+    likedByUids: [],
+    comments: [],
+  };
+
+  await setDoc(postReference, {
+    ...payload,
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+
+  return {
+    ...payload,
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  };
 }
 
 export async function addAgendaEventComment(eventId: string, comment: HomeCommentRecord) {
   await updateDoc(doc(firestoreDb, "agendaEvents", eventId), {
     comments: arrayUnion(comment),
+    updatedAt: serverTimestamp(),
+  });
+}
+
+export async function addHomePostComment(postId: string, comment: HomeCommentRecord) {
+  await updateDoc(doc(firestoreDb, "homePosts", postId), {
+    comments: arrayUnion(comment),
+    updatedAt: serverTimestamp(),
+  });
+}
+
+export async function toggleHomePostLike(postId: string, userUid: string, shouldLike: boolean) {
+  await updateDoc(doc(firestoreDb, "homePosts", postId), {
+    likedByUids: shouldLike ? arrayUnion(userUid) : arrayRemove(userUid),
     updatedAt: serverTimestamp(),
   });
 }

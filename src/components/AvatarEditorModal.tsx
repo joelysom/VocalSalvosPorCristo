@@ -8,6 +8,9 @@ type AvatarEditorModalProps = {
   imageSrc: string;
   title: string;
   description: string;
+  eyebrowLabel?: string;
+  cropShape?: "round" | "rect";
+  aspect?: number;
   onClose: () => void;
   onApply: (dataUrl: string) => Promise<void> | void;
 };
@@ -23,6 +26,9 @@ export function AvatarEditorModal({
   imageSrc,
   title,
   description,
+  eyebrowLabel = "Foto de perfil",
+  cropShape = "round",
+  aspect = 1,
   onClose,
   onApply,
 }: AvatarEditorModalProps) {
@@ -87,7 +93,7 @@ export function AvatarEditorModal({
       <div className="home-modal-card avatar-editor-card">
         <div className="home-modal-header avatar-editor-header">
           <div>
-            <p className="home-card-eyebrow">Foto de perfil</p>
+            <p className="home-card-eyebrow">{eyebrowLabel}</p>
             <h3>{title}</h3>
             <p>{description}</p>
           </div>
@@ -105,9 +111,9 @@ export function AvatarEditorModal({
                 crop={crop}
                 zoom={zoom}
                 rotation={rotation}
-                cropShape="round"
+                cropShape={cropShape}
                 showGrid={false}
-                aspect={1}
+                aspect={aspect}
                 objectFit="cover"
                 onCropChange={setCrop}
                 onZoomChange={setZoom}

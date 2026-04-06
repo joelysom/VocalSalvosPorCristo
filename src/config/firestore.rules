@@ -371,7 +371,6 @@ service cloud.firestore {
 				request.resource.data.createdByUid.size() <= 128 &&
 				request.resource.data.comments is list &&
 				request.resource.data.comments.size() <= 200 &&
-				request.resource.data.comments.all(comment, hasValidCommentEntry(comment)) &&
 				request.resource.data.createdAt is timestamp &&
 				request.resource.data.updatedAt is timestamp;
 		}
@@ -385,6 +384,87 @@ service cloud.firestore {
 				request.resource.data.location == resource.data.location &&
 				request.resource.data.note == resource.data.note &&
 				request.resource.data.author == resource.data.author &&
+				request.resource.data.createdByUid == resource.data.createdByUid;
+		}
+
+		function hasValidHomePostKeys() {
+			return request.resource.data.keys().hasAll([
+					'id',
+					'category',
+					'title',
+					'content',
+					'author',
+					'role',
+					'imageUrl',
+					'expirationDays',
+					'createdByUid',
+					'likedByUids',
+					'comments',
+					'createdAt',
+					'updatedAt'
+				]) &&
+				request.resource.data.keys().hasOnly([
+					'id',
+					'category',
+					'title',
+					'content',
+					'author',
+					'role',
+					'imageUrl',
+					'expirationDays',
+					'createdByUid',
+					'likedByUids',
+					'comments',
+					'createdAt',
+					'updatedAt'
+				]);
+		}
+
+		function hasValidHomePostData(postId) {
+			return hasValidHomePostKeys() &&
+				request.resource.data.id == postId &&
+				request.resource.data.category is string &&
+				request.resource.data.category.size() >= 1 &&
+				request.resource.data.category.size() <= 30 &&
+				request.resource.data.title is string &&
+				request.resource.data.title.size() >= 3 &&
+				request.resource.data.title.size() <= 120 &&
+				request.resource.data.content is string &&
+				request.resource.data.content.size() >= 1 &&
+				request.resource.data.content.size() <= 2000 &&
+				request.resource.data.author is string &&
+				request.resource.data.author.size() >= 1 &&
+				request.resource.data.author.size() <= 80 &&
+				request.resource.data.role is string &&
+				request.resource.data.role.size() <= 60 &&
+				request.resource.data.imageUrl is string &&
+				request.resource.data.imageUrl.size() <= 700000 &&
+				(
+					request.resource.data.imageUrl.size() == 0 ||
+					request.resource.data.imageUrl.matches('data:image/.*') ||
+					request.resource.data.imageUrl.matches('https://.*')
+				) &&
+				request.resource.data.expirationDays is int &&
+				request.resource.data.expirationDays in [0, 7, 21, 30] &&
+				request.resource.data.createdByUid is string &&
+				request.resource.data.createdByUid.size() <= 128 &&
+				request.resource.data.likedByUids is list &&
+				request.resource.data.likedByUids.size() <= 500 &&
+				request.resource.data.comments is list &&
+				request.resource.data.comments.size() <= 200 &&
+				request.resource.data.createdAt is timestamp &&
+				request.resource.data.updatedAt is timestamp;
+		}
+
+		function homePostCoreFieldsUnchanged() {
+			return request.resource.data.id == resource.data.id &&
+				request.resource.data.category == resource.data.category &&
+				request.resource.data.title == resource.data.title &&
+				request.resource.data.content == resource.data.content &&
+				request.resource.data.author == resource.data.author &&
+				request.resource.data.role == resource.data.role &&
+				request.resource.data.imageUrl == resource.data.imageUrl &&
+				request.resource.data.expirationDays == resource.data.expirationDays &&
 				request.resource.data.createdByUid == resource.data.createdByUid;
 		}
 
@@ -435,6 +515,24 @@ service cloud.firestore {
 					hasValidAgendaEventData(eventId) &&
 					request.resource.data.createdAt == resource.data.createdAt &&
 					agendaCoreFieldsUnchanged()
+				);
+			allow delete: if canManageAgendaContent();
+		}
+
+		match /homePosts/{postId} {
+			allow get, list: if signedIn();
+			allow create: if signedIn() &&
+				request.auth.uid == request.resource.data.createdByUid &&
+				hasValidHomePostData(postId);
+			allow update: if (
+					canManageAgendaContent() &&
+					hasValidHomePostData(postId) &&
+					request.resource.data.createdAt == resource.data.createdAt
+				) || (
+					signedIn() &&
+					hasValidHomePostData(postId) &&
+					request.resource.data.createdAt == resource.data.createdAt &&
+					homePostCoreFieldsUnchanged()
 				);
 			allow delete: if canManageAgendaContent();
 		}
