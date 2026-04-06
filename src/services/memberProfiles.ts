@@ -94,6 +94,28 @@ export type MemberDirectoryProfile = {
 const MAX_AVATAR_DIMENSION = 320;
 const MAX_AVATAR_DATA_URL_LENGTH = 700000;
 
+type AvatarSource = File | string | null | undefined;
+
+function isRemotePhotoUrl(value: string | null | undefined) {
+  return Boolean(value && (value.startsWith("https://") || value.startsWith("http://")));
+}
+
+async function syncAuthProfile(user: User, name: string, avatarDataUrl: string) {
+  const authProfileUpdate: Parameters<typeof updateProfile>[1] = {
+    displayName: name,
+  };
+
+  if (isRemotePhotoUrl(avatarDataUrl)) {
+    authProfileUpdate.photoURL = avatarDataUrl;
+  }
+
+  try {
+    await updateProfile(user, authProfileUpdate);
+  } catch (error) {
+    console.warn("Falha ao sincronizar o perfil no Firebase Auth.", error);
+  }
+}
+
 function normalizePhone(phone: string) {
   return phone.replace(/\D/g, "");
 }
@@ -127,6 +149,29 @@ async function syncMemberDirectory(profile: Pick<
   );
 }
 
+export async function ensureMemberDirectoryEntry(profile: Pick<
+  MemberProfile,
+  "uid" | "name" | "phone" | "phoneNormalized" | "avatarDataUrl" | "vocalRange" | "leadershipRole" | "accountLevel" | "availability"
+>) {
+  await syncMemberDirectory(profile);
+}
+
+export async function backfillMemberDirectoryFromMembers() {
+  const members = await listMemberProfiles();
+  const syncResults = await Promise.allSettled(
+    members.map((member) => syncMemberDirectory(member)),
+  );
+
+  const syncedCount = syncResults.filter((result) => result.status === "fulfilled").length;
+  const failedCount = syncResults.length - syncedCount;
+
+  return {
+    total: members.length,
+    synced: syncedCount,
+    failed: failedCount,
+  };
+}
+
 function readFileAsDataUrl(file: File) {
   return new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
@@ -155,6 +200,10 @@ function loadImage(dataUrl: string) {
 
 async function convertAvatarToDataUrl(file: File) {
   const fileDataUrl = await readFileAsDataUrl(file);
+  return compressAvatarDataUrl(fileDataUrl);
+}
+
+async function compressAvatarDataUrl(fileDataUrl: string) {
   const image = await loadImage(fileDataUrl);
 
   const scale = Math.min(1, MAX_AVATAR_DIMENSION / Math.max(image.width, image.height));
@@ -181,10 +230,30 @@ async function convertAvatarToDataUrl(file: File) {
   return dataUrl;
 }
 
+async function resolveAvatarDataUrl(avatarSource: AvatarSource) {
+  if (!avatarSource) {
+    return "";
+  }
+
+  if (typeof avatarSource === "string") {
+    if (!avatarSource.trim()) {
+      return "";
+    }
+
+    if (avatarSource.startsWith("http://") || avatarSource.startsWith("https://")) {
+      return avatarSource;
+    }
+
+    return compressAvatarDataUrl(avatarSource);
+  }
+
+  return convertAvatarToDataUrl(avatarSource);
+}
+
 export async function saveMemberProfile(
   user: User,
   form: FormState,
-  avatarFile?: File | null,
+  avatarSource?: AvatarSource,
 ) {
   const memberReference = doc(firestoreDb, "members", user.uid);
   const existingSnapshot = await getDoc(memberReference);
@@ -196,8 +265,8 @@ export async function saveMemberProfile(
 
   let avatarDataUrl = existingData?.avatarDataUrl || user.photoURL || "";
 
-  if (avatarFile) {
-    avatarDataUrl = await convertAvatarToDataUrl(avatarFile);
+  if (avatarSource) {
+    avatarDataUrl = await resolveAvatarDataUrl(avatarSource);
   }
 
   const profilePayload = {
@@ -227,10 +296,7 @@ export async function saveMemberProfile(
 
   await setDoc(memberReference, profilePayload, { merge: true });
   await syncMemberDirectory(profilePayload);
-  await updateProfile(user, {
-    displayName: profilePayload.name,
-    photoURL: avatarDataUrl || null,
-  });
+  await syncAuthProfile(user, profilePayload.name, avatarDataUrl);
 
   return {
     ...profilePayload,
@@ -308,7 +374,7 @@ export async function listMemberDirectoryProfiles() {
 export async function updateOwnMemberProfile(
   user: User,
   updates: OwnMemberProfileUpdate,
-  avatarFile?: File | null,
+  avatarSource?: AvatarSource,
   allowExtendedDetails = false,
 ) {
   const memberReference = doc(firestoreDb, "members", user.uid);
@@ -321,8 +387,8 @@ export async function updateOwnMemberProfile(
   const existingData = existingSnapshot.data() as MemberProfile;
   let avatarDataUrl = existingData.avatarDataUrl || user.photoURL || "";
 
-  if (avatarFile) {
-    avatarDataUrl = await convertAvatarToDataUrl(avatarFile);
+  if (avatarSource) {
+    avatarDataUrl = await resolveAvatarDataUrl(avatarSource);
   }
 
   const nextProfile: MemberProfile = {
@@ -363,10 +429,7 @@ export async function updateOwnMemberProfile(
   });
 
   await syncMemberDirectory(nextProfile);
-  await updateProfile(user, {
-    displayName: nextProfile.name,
-    photoURL: nextProfile.avatarDataUrl || null,
-  });
+  await syncAuthProfile(user, nextProfile.name, nextProfile.avatarDataUrl);
 
   return nextProfile;
 }

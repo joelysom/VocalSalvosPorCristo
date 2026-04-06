@@ -22,14 +22,16 @@ import {
 import { initialFormState } from "../data/mock";
 import type { FormErrors, FormState } from "../data/mock";
 import {
+  backfillMemberDirectoryFromMembers,
   ensureAdminBootstrapProfile,
   getMemberProfile,
   listMemberProfiles,
   saveMemberProfile,
-  trackMemberPresence,
   updateManagedMemberProfile,
   type MemberProfile,
 } from "../services/memberProfiles";
+import { readImageFileAsDataUrl } from "../utils/avatarEditor";
+import { AvatarEditorModal } from "../components/AvatarEditorModal";
 import { AdminAccessPage } from "./AdminAccessPage";
 import { AdminDashboardPage } from "./AdminDashboardPage";
 import { HomePage } from "./HomePage";
@@ -110,7 +112,9 @@ export default function PagesIndex() {
   const [memberLeadershipRole, setMemberLeadershipRole] = useState("");
   const [memberPermissions, setMemberPermissions] = useState<string[]>([]);
   const [avatarPreview, setAvatarPreview] = useState("");
-  const [avatarFile, setAvatarFile] = useState<File | null>(null);
+  const [avatarImageDataUrl, setAvatarImageDataUrl] = useState<string | null>(null);
+  const [avatarEditorSource, setAvatarEditorSource] = useState("");
+  const [showAvatarEditor, setShowAvatarEditor] = useState(false);
   const [form, setForm] = useState<FormState>({ ...initialFormState });
   const [errors, setErrors] = useState<FormErrors>({});
   const [authSubmitting, setAuthSubmitting] = useState(false);
@@ -125,6 +129,16 @@ export default function PagesIndex() {
     try {
       const members = await listMemberProfiles();
       setManagedMembers(members);
+
+      const backfillResult = await backfillMemberDirectoryFromMembers();
+
+      if (backfillResult.failed > 0) {
+        setAuthStatusMessage(
+          `Lista carregada. ${backfillResult.synced} perfil(is) sincronizado(s) no diretório e ${backfillResult.failed} com pendência.`,
+        );
+      } else {
+        setAuthStatusMessage("");
+      }
     } catch {
       setAuthStatusMessage("Não foi possível carregar a lista de membros agora.");
     } finally {
@@ -156,18 +170,15 @@ export default function PagesIndex() {
     }));
 
     setAvatarPreview(currentUser?.photoURL || "");
-    setAvatarFile(null);
+    setAvatarImageDataUrl(null);
+    setAvatarEditorSource("");
+    setShowAvatarEditor(false);
   };
 
   useEffect(() => {
-    let stopPresenceTracking: (() => void) | undefined;
-
     void firebaseAnalyticsPromise;
 
     const unsubscribe = onAuthStateChanged(firebaseAuth, async (user) => {
-      stopPresenceTracking?.();
-      stopPresenceTracking = undefined;
-
       if (!user) {
         setProfileCompletionMode(false);
         setMemberName("Maria Clara");
@@ -178,6 +189,9 @@ export default function PagesIndex() {
         setMemberPermissions([]);
         setManagedMembers([]);
         setCurrentPage("login");
+        setAvatarImageDataUrl(null);
+        setAvatarEditorSource("");
+        setShowAvatarEditor(false);
         return;
       }
 
@@ -233,6 +247,9 @@ export default function PagesIndex() {
         setMemberLeadershipRole(leadershipRole);
         setMemberPermissions(normalizePermissions(profile.permissions, accessLevel));
         setAvatarPreview(profile.avatarDataUrl || user.photoURL || "");
+        setAvatarImageDataUrl(null);
+        setAvatarEditorSource("");
+        setShowAvatarEditor(false);
         setAuthStatusMessage("");
 
         if (isAdminRoute && accessLevel === "administration") {
@@ -242,8 +259,6 @@ export default function PagesIndex() {
         startTransition(() => {
           setCurrentPage(isAdminRoute && accessLevel === "administration" ? "admin" : "home");
         });
-
-        stopPresenceTracking = trackMemberPresence(user.uid, displayName);
       } catch {
         setAuthStatusMessage("Sua sessão foi iniciada, mas o perfil não pôde ser carregado agora.");
       }
@@ -251,7 +266,6 @@ export default function PagesIndex() {
 
     return () => {
       unsubscribe();
-      stopPresenceTracking?.();
     };
   }, [isAdminRoute]);
 
@@ -269,7 +283,9 @@ export default function PagesIndex() {
       void signOut(firebaseAuth).finally(() => {
         setProfileCompletionMode(false);
         setAvatarPreview("");
-        setAvatarFile(null);
+        setAvatarImageDataUrl(null);
+        setAvatarEditorSource("");
+        setShowAvatarEditor(false);
         setMemberPermissions([]);
         setForm({ ...initialFormState });
         startTransition(() => {
@@ -291,6 +307,9 @@ export default function PagesIndex() {
 
   const openRegisterPage = () => {
     setProfileCompletionMode(false);
+    setAvatarImageDataUrl(null);
+    setAvatarEditorSource("");
+    setShowAvatarEditor(false);
     startTransition(() => {
       setCurrentPage("register");
       setRegisterStep(0);
@@ -312,6 +331,9 @@ export default function PagesIndex() {
       setMemberLeadershipRole("");
       setMemberPermissions([]);
       setManagedMembers([]);
+      setAvatarImageDataUrl(null);
+      setAvatarEditorSource("");
+      setShowAvatarEditor(false);
       setForm((current) => ({
         ...current,
         loginPassword: "",
@@ -325,19 +347,26 @@ export default function PagesIndex() {
     }
   };
 
+  const openAvatarEditor = async (file: File) => {
+    const imageDataUrl = await readImageFileAsDataUrl(file);
+
+    setAvatarEditorSource(imageDataUrl);
+    setShowAvatarEditor(true);
+  };
+
   const handleAvatarChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
+    event.target.value = "";
 
     if (!file) {
       return;
     }
 
-    setAvatarFile(file);
-    const reader = new FileReader();
-    reader.onload = () => {
-      setAvatarPreview(String(reader.result || ""));
-    };
-    reader.readAsDataURL(file);
+    void openAvatarEditor(file).catch((error) => {
+      setAuthStatusMessage(
+        error instanceof Error ? error.message : "Não foi possível abrir o editor de foto agora.",
+      );
+    });
   };
 
   const handleLogin = async () => {
@@ -407,7 +436,7 @@ export default function PagesIndex() {
             )
           ).user;
 
-      const profile = await saveMemberProfile(user, form, avatarFile);
+      const profile = await saveMemberProfile(user, form, avatarImageDataUrl);
       const tokenResult = await user.getIdTokenResult();
       const accessLevel = normalizeAccessLevel(
         typeof tokenResult.claims.accountLevel === "string"
@@ -427,7 +456,9 @@ export default function PagesIndex() {
       );
       setMemberPermissions(normalizePermissions(profile.permissions, accessLevel));
       setAvatarPreview(profile.avatarDataUrl || "");
-      setAvatarFile(null);
+      setAvatarImageDataUrl(null);
+      setAvatarEditorSource("");
+      setShowAvatarEditor(false);
       setAuthStatusMessage("");
       setForm({
         ...initialFormState,
@@ -656,5 +687,27 @@ export default function PagesIndex() {
     );
   }
 
-  return <div className="app-shell">{content}</div>;
+  return (
+    <div className="app-shell">
+      {content}
+
+      <AvatarEditorModal
+        open={showAvatarEditor}
+        imageSrc={avatarEditorSource}
+        title="Ajuste sua foto"
+        description="Corte, aproxime, gire e ajuste a imagem antes de salvar no cadastro."
+        onClose={() => {
+          setShowAvatarEditor(false);
+          setAvatarEditorSource("");
+        }}
+        onApply={async (dataUrl) => {
+          setAvatarPreview(dataUrl);
+          setAvatarImageDataUrl(dataUrl);
+          setShowAvatarEditor(false);
+          setAvatarEditorSource("");
+          setAuthStatusMessage("");
+        }}
+      />
+    </div>
+  );
 }

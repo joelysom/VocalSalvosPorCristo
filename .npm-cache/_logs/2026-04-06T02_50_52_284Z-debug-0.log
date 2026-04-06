@@ -1,0 +1,19 @@
+0 verbose cli F:\nvm4w\nodejs\node.exe F:\nvm4w\nodejs\node_modules\npm\bin\npm-cli.js
+1 info using npm@10.8.1
+2 info using node@v20.16.0
+3 silly config load:file:C:\Users\PC\AppData\Local\nvm\v20.16.0\node_modules\npm\npmrc
+4 silly config load:file:D:\react-js\Vocal\.npmrc
+5 silly config load:file:C:\Users\PC\.npmrc
+6 silly config load:file:C:\Users\PC\AppData\Roaming\npm\etc\npmrc
+7 verbose title npm run lint
+8 verbose argv "run" "lint"
+9 verbose logfile logs-max:10 dir:D:\react-js\Vocal\.npm-cache\_logs\2026-04-06T02_50_52_284Z-
+10 verbose logfile D:\react-js\Vocal\.npm-cache\_logs\2026-04-06T02_50_52_284Z-debug-0.log
+11 silly logfile start cleaning logs, removing 1 files
+12 silly logfile done cleaning log files
+13 verbose cwd D:\react-js\Vocal
+14 verbose os Windows_NT 10.0.19045
+15 verbose node v20.16.0
+16 verbose npm  v10.8.1
+17 verbose exit 0
+18 info ok

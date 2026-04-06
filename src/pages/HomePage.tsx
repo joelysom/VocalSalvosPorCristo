@@ -1,6 +1,7 @@
-import { useDeferredValue, useEffect, useMemo, useState } from "react";
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import type * as React from "react";
 import {
+  FiBell,
   FiCamera,
   FiCopy,
   FiHelpCircle,
@@ -8,16 +9,19 @@ import {
   FiPhone,
   FiPlus,
   FiSearch,
-  FiUser,
+  FiUsers,
 } from "react-icons/fi";
 import { FaWhatsapp } from "react-icons/fa6";
 import { GiMusicalScore } from "react-icons/gi";
 import { HiOutlineArrowRightOnRectangle } from "react-icons/hi2";
 import { LuCalendarDays } from "react-icons/lu";
+import { AvatarEditorModal } from "../components/AvatarEditorModal";
 import { firebaseAuth } from "../config/firebase";
 import { type AccessLevel, normalizeAccessLevel, normalizePermissions } from "../data/access";
 import logoAd from "../img/Login/LogoAD.png";
 import {
+  backfillMemberDirectoryFromMembers,
+  ensureMemberDirectoryEntry,
   getMemberProfile,
   listMemberDirectoryProfiles,
   type MemberDirectoryProfile,
@@ -25,6 +29,14 @@ import {
   type OwnMemberProfileUpdate,
   updateOwnMemberProfile,
 } from "../services/memberProfiles";
+import {
+  addAgendaEventComment,
+  createAgendaEvent,
+  listAgendaEvents,
+  type AgendaEventRecord,
+  type HomeCommentRecord,
+} from "../services/homeContent";
+import { readImageFileAsDataUrl } from "../utils/avatarEditor";
 
 type HomePageProps = {
   memberName: string;
@@ -36,16 +48,10 @@ type HomePageProps = {
   onBackToAuth: () => void;
 };
 
-type HomeTab = "home" | "agenda" | "songs" | "profile";
+type HomeTab = "home" | "agenda" | "songs" | "members";
 type ComposerMode = "home" | "agenda";
 
-type CommentEntry = {
-  id: string;
-  author: string;
-  role: string;
-  text: string;
-  createdAt: string;
-};
+type CommentEntry = HomeCommentRecord;
 
 type FeedPost = {
   id: string;
@@ -63,6 +69,7 @@ type AgendaEvent = {
   id: string;
   kind: string;
   title: string;
+  scheduledDate: string;
   dateLabel: string;
   time: string;
   location: string;
@@ -148,7 +155,7 @@ function resolveDirectoryRoleLabel(member: MemberDirectoryProfile) {
     return "Administração";
   }
 
-  return member.leadershipRole || "Membro";
+  return "Membro do vocal";
 }
 
 function resolveSearchPlaceholder(tab: HomeTab) {
@@ -157,7 +164,7 @@ function resolveSearchPlaceholder(tab: HomeTab) {
       return "Buscar eventos, local ou observações";
     case "songs":
       return "Buscar músicas e observações";
-    case "profile":
+    case "members":
       return "Buscar membro, cargo ou timbre";
     default:
       return "Buscar avisos, comentários ou informações";
@@ -185,6 +192,66 @@ function buildProfileDraft(
   };
 }
 
+function mapAgendaEventRecord(event: AgendaEventRecord): AgendaEvent {
+  return {
+    id: event.id,
+    kind: event.kind,
+    title: event.title,
+    scheduledDate: event.scheduledDate,
+    dateLabel: formatDisplayDate(event.scheduledDate),
+    time: event.time,
+    location: event.location,
+    note: event.note,
+    author: event.author,
+    comments: Array.isArray(event.comments) ? event.comments : [],
+  };
+}
+
+function buildDirectoryStatusMessage(members: MemberDirectoryProfile[], currentUid: string, didBackfill = false) {
+  if (didBackfill && members.length > 0) {
+    return `Diretório atualizado com ${members.length} membro(s).`;
+  }
+
+  if (members.length === 0) {
+    return "Ainda não há perfis sincronizados no diretório interno.";
+  }
+
+  if (members.length === 1 && members[0]?.uid === currentUid) {
+    return "Somente o seu perfil está sincronizado no diretório por enquanto.";
+  }
+
+  return "";
+}
+
+async function fetchAgendaContent() {
+  const agendaRecords = await listAgendaEvents();
+  return agendaRecords.map(mapAgendaEventRecord);
+}
+
+async function fetchDirectoryContent(currentUid: string, memberProfile: MemberProfile | null) {
+  let didBackfill = false;
+  let directory = await listMemberDirectoryProfiles();
+
+  if (memberProfile && !directory.some((member) => member.uid === memberProfile.uid)) {
+    await ensureMemberDirectoryEntry(memberProfile);
+    directory = await listMemberDirectoryProfiles();
+  }
+
+  if (memberProfile && normalizeAccessLevel(memberProfile.accountLevel) === "administration" && directory.length <= 1) {
+    const syncSummary = await backfillMemberDirectoryFromMembers();
+
+    if (syncSummary.synced > 0) {
+      didBackfill = true;
+      directory = await listMemberDirectoryProfiles();
+    }
+  }
+
+  return {
+    members: directory,
+    statusMessage: buildDirectoryStatusMessage(directory, currentUid, didBackfill),
+  };
+}
+
 export function HomePage({
   memberName,
   memberGender,
@@ -203,6 +270,8 @@ export function HomePage({
   const [composerMode, setComposerMode] = useState<ComposerMode>("home");
   const [showLogoutModal, setShowLogoutModal] = useState(false);
   const [showHelpModal, setShowHelpModal] = useState(false);
+  const [showNotificationsModal, setShowNotificationsModal] = useState(false);
+  const [showProfileModal, setShowProfileModal] = useState(false);
   const [composerDraft, setComposerDraft] = useState({
     category: "Aviso",
     title: "",
@@ -218,13 +287,20 @@ export function HomePage({
     buildProfileDraft(null, memberName, memberGender, memberVocalRange),
   );
   const [profileAvatarPreview, setProfileAvatarPreview] = useState("");
-  const [profileAvatarFile, setProfileAvatarFile] = useState<File | null>(null);
+  const [profileAvatarDataUrl, setProfileAvatarDataUrl] = useState<string | null>(null);
+  const [profileAvatarEditorSource, setProfileAvatarEditorSource] = useState("");
+  const [showProfileAvatarEditor, setShowProfileAvatarEditor] = useState(false);
   const [profileSaving, setProfileSaving] = useState(false);
   const [profileStatus, setProfileStatus] = useState("");
+  const [agendaLoading, setAgendaLoading] = useState(false);
+  const [agendaStatus, setAgendaStatus] = useState("");
+  const [composerSubmitting, setComposerSubmitting] = useState(false);
   const [directoryMembers, setDirectoryMembers] = useState<MemberDirectoryProfile[]>([]);
   const [directoryLoading, setDirectoryLoading] = useState(false);
+  const [directoryRefreshing, setDirectoryRefreshing] = useState(false);
   const [directoryStatus, setDirectoryStatus] = useState("");
   const [selectedDirectoryUid, setSelectedDirectoryUid] = useState("");
+  const mainPanelRef = useRef<HTMLDivElement | null>(null);
 
   const deferredQuery = useDeferredValue(query.trim().toLowerCase());
   const currentUser = firebaseAuth.currentUser;
@@ -260,13 +336,16 @@ export function HomePage({
       }
 
       setDirectoryLoading(true);
+      setAgendaLoading(true);
       setProfileStatus("");
+      setAgendaStatus("");
       setDirectoryStatus("");
 
       try {
-        const [profileResult, directoryResult] = await Promise.all([
-          getMemberProfile(currentUid),
-          listMemberDirectoryProfiles(),
+        const profileResult = await getMemberProfile(currentUid);
+        const [agendaResult, directoryResult] = await Promise.allSettled([
+          fetchAgendaContent(),
+          fetchDirectoryContent(currentUid, profileResult),
         ]);
 
         if (!isActive) {
@@ -276,17 +355,32 @@ export function HomePage({
         setProfile(profileResult);
         setProfileDraft(buildProfileDraft(profileResult, memberName, memberGender, memberVocalRange));
         setProfileAvatarPreview(profileResult?.avatarDataUrl || currentUser?.photoURL || "");
-        setDirectoryMembers(directoryResult);
+        setProfileAvatarDataUrl(null);
+        setProfileAvatarEditorSource("");
+        setShowProfileAvatarEditor(false);
+
+        if (agendaResult.status === "fulfilled") {
+          setAgendaEvents(agendaResult.value);
+        } else {
+          setAgendaStatus("Não foi possível carregar a agenda agora.");
+        }
+
+        if (directoryResult.status === "fulfilled") {
+          setDirectoryMembers(directoryResult.value.members);
+          setDirectoryStatus(directoryResult.value.statusMessage);
+        } else {
+          setDirectoryStatus("Não foi possível carregar a lista de membros agora.");
+        }
       } catch {
         if (!isActive) {
           return;
         }
 
-        setDirectoryStatus("Não foi possível carregar a lista de membros agora.");
         setProfileStatus("Não foi possível carregar seus dados completos agora.");
       } finally {
         if (isActive) {
           setDirectoryLoading(false);
+          setAgendaLoading(false);
         }
       }
     }
@@ -325,19 +419,17 @@ export function HomePage({
   }, [agendaEvents, deferredQuery]);
 
   const filteredDirectoryMembers = useMemo(() => {
-    const others = directoryMembers.filter((member) => member.uid !== currentUid);
-
     if (!deferredQuery) {
-      return others;
+      return directoryMembers;
     }
 
-    return others.filter((member) =>
+    return directoryMembers.filter((member) =>
       [member.name, member.vocalRange, member.leadershipRole, member.accountLevel, member.phone]
         .join(" ")
         .toLowerCase()
         .includes(deferredQuery),
     );
-  }, [currentUid, deferredQuery, directoryMembers]);
+  }, [deferredQuery, directoryMembers]);
 
   useEffect(() => {
     if (!filteredDirectoryMembers.length) {
@@ -354,6 +446,16 @@ export function HomePage({
     filteredDirectoryMembers.find((member) => member.uid === selectedDirectoryUid) || null;
   const nextEvent = filteredAgendaEvents[0] ?? agendaEvents[0];
   const profileAvatar = profileAvatarPreview || currentUser?.photoURL || profile?.avatarDataUrl || "";
+  const notificationItems = useMemo(() => agendaEvents.slice(0, 3), [agendaEvents]);
+
+  useEffect(() => {
+    setQuery("");
+    mainPanelRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+  }, [activeTab]);
+
+  const openTab = (tab: HomeTab) => {
+    setActiveTab(tab);
+  };
 
   const openComposer = () => {
     if (activeTab === "agenda" && canManageAgenda) {
@@ -384,26 +486,41 @@ export function HomePage({
     setComposerDraft((current) => ({ ...current, [name]: value }));
   };
 
-  const publishComposerEntry = () => {
+  const publishComposerEntry = async () => {
     if (!composerDraft.title.trim() || !composerDraft.content.trim()) {
       return;
     }
 
     if (composerMode === "agenda") {
-      const newEvent: AgendaEvent = {
-        id: createId("event"),
-        kind: composerDraft.kind || "Ensaio",
-        title: composerDraft.title.trim(),
-        dateLabel: formatDisplayDate(composerDraft.date),
-        time: composerDraft.time.trim() || "19:30",
-        location: composerDraft.location.trim() || "Local a definir",
-        note: composerDraft.content.trim(),
-        author: roleLabel,
-        comments: [],
-      };
+      if (!currentUid) {
+        setAgendaStatus("Não foi possível identificar sua sessão para salvar a agenda.");
+        return;
+      }
 
-      setAgendaEvents((current) => [newEvent, ...current]);
-      setActiveTab("agenda");
+      setComposerSubmitting(true);
+
+      try {
+        await createAgendaEvent({
+          kind: composerDraft.kind || "Ensaio",
+          title: composerDraft.title.trim(),
+          scheduledDate: composerDraft.date,
+          time: composerDraft.time.trim() || "19:30",
+          location: composerDraft.location.trim() || "Local a definir",
+          note: composerDraft.content.trim(),
+          author: resolvedName,
+          createdByUid: currentUid,
+        });
+
+        const nextAgendaEvents = await fetchAgendaContent();
+        setAgendaEvents(nextAgendaEvents);
+        setAgendaStatus("Compromisso salvo com sucesso na agenda.");
+        setActiveTab("agenda");
+        setShowComposer(false);
+      } catch {
+        setAgendaStatus("Não foi possível salvar esse compromisso no Firestore agora.");
+      } finally {
+        setComposerSubmitting(false);
+      }
     } else {
       const newPost: FeedPost = {
         id: createId("post"),
@@ -419,9 +536,8 @@ export function HomePage({
 
       setPosts((current) => [newPost, ...current]);
       setActiveTab("home");
+      setShowComposer(false);
     }
-
-    setShowComposer(false);
   };
 
   const addPostComment = (postId: string) => {
@@ -444,6 +560,7 @@ export function HomePage({
                   role: roleLabel,
                   text: nextComment,
                   createdAt: "agora",
+                  createdByUid: currentUid,
                 },
               ],
             }
@@ -454,34 +571,55 @@ export function HomePage({
     setCommentDrafts((current) => ({ ...current, [postId]: "" }));
   };
 
-  const addAgendaComment = (eventId: string) => {
+  const addAgendaComment = async (eventId: string) => {
     const nextComment = commentDrafts[eventId]?.trim();
 
-    if (!nextComment) {
+    if (!nextComment || !currentUid) {
       return;
     }
 
-    setAgendaEvents((current) =>
-      current.map((event) =>
-        event.id === eventId
-          ? {
-              ...event,
-              comments: [
-                ...event.comments,
-                {
-                  id: createId("agenda-comment"),
-                  author: resolvedName,
-                  role: roleLabel,
-                  text: nextComment,
-                  createdAt: "agora",
-                },
-              ],
-            }
-          : event,
-      ),
-    );
+    try {
+      await addAgendaEventComment(eventId, {
+        id: createId("agenda-comment"),
+        author: resolvedName,
+        role: roleLabel,
+        text: nextComment,
+        createdAt: "agora",
+        createdByUid: currentUid,
+      });
 
-    setCommentDrafts((current) => ({ ...current, [eventId]: "" }));
+      const nextAgendaEvents = await fetchAgendaContent();
+      setAgendaEvents(nextAgendaEvents);
+      setCommentDrafts((current) => ({ ...current, [eventId]: "" }));
+      setAgendaStatus("Comentário enviado para a agenda.");
+    } catch {
+      setAgendaStatus("Não foi possível comentar nesse compromisso agora.");
+    }
+  };
+
+  const handleDirectorySearchAction = async () => {
+    if (query.trim()) {
+      if (filteredDirectoryMembers.length > 0) {
+        setSelectedDirectoryUid(filteredDirectoryMembers[0].uid);
+        setDirectoryStatus(`${filteredDirectoryMembers.length} membro(s) encontrado(s).`);
+      } else {
+        setDirectoryStatus("Nenhum membro encontrado para essa busca.");
+      }
+
+      return;
+    }
+
+    setDirectoryRefreshing(true);
+
+    try {
+      const directoryResult = await fetchDirectoryContent(currentUid, profile);
+      setDirectoryMembers(directoryResult.members);
+      setDirectoryStatus(directoryResult.statusMessage || "Diretório atualizado.");
+    } catch {
+      setDirectoryStatus("Não foi possível atualizar a lista de membros agora.");
+    } finally {
+      setDirectoryRefreshing(false);
+    }
   };
 
   const handleProfileFieldChange = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -489,19 +627,26 @@ export function HomePage({
     setProfileDraft((current) => ({ ...current, [name]: value }));
   };
 
+  const openProfileAvatarEditor = async (file: File) => {
+    const imageDataUrl = await readImageFileAsDataUrl(file);
+
+    setProfileAvatarEditorSource(imageDataUrl);
+    setShowProfileAvatarEditor(true);
+  };
+
   const handleProfileAvatarChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
+    event.target.value = "";
 
     if (!file) {
       return;
     }
 
-    setProfileAvatarFile(file);
-    const reader = new FileReader();
-    reader.onload = () => {
-      setProfileAvatarPreview(String(reader.result || ""));
-    };
-    reader.readAsDataURL(file);
+    void openProfileAvatarEditor(file).catch((error) => {
+      setProfileStatus(
+        error instanceof Error ? error.message : "Não foi possível abrir o editor da foto agora.",
+      );
+    });
   };
 
   const saveProfile = async () => {
@@ -517,16 +662,19 @@ export function HomePage({
       const updatedProfile = await updateOwnMemberProfile(
         currentUser,
         profileDraft,
-        profileAvatarFile,
+        profileAvatarDataUrl,
         canManageExtendedProfile,
       );
-      const directory = await listMemberDirectoryProfiles();
+      const directoryResult = await fetchDirectoryContent(currentUid, updatedProfile);
 
       setProfile(updatedProfile);
       setProfileDraft(buildProfileDraft(updatedProfile, memberName, memberGender, memberVocalRange));
       setProfileAvatarPreview(updatedProfile.avatarDataUrl || "");
-      setProfileAvatarFile(null);
-      setDirectoryMembers(directory);
+      setProfileAvatarDataUrl(null);
+      setProfileAvatarEditorSource("");
+      setShowProfileAvatarEditor(false);
+      setDirectoryMembers(directoryResult.members);
+      setDirectoryStatus(directoryResult.statusMessage);
       setProfileStatus("Perfil atualizado com sucesso.");
     } catch (error) {
       setProfileStatus(
@@ -582,91 +730,90 @@ export function HomePage({
 
       <div className="home-modern-shell">
         <header className="home-modern-header">
-          <div className="home-identity-block">
-            <div className="home-brand-mark">
-              <img src={logoAd} alt="Logo do vocal" />
-            </div>
+          <div className="home-brand-mark">
+            <img src={logoAd} alt="Logo do vocal" />
+          </div>
 
-            <div className="home-identity-copy">
-              <p className="home-card-eyebrow">Ministério em movimento</p>
-              <h1>Bem-vindo, {firstName}</h1>
-              <div className="home-chip-row">
-                <span className="home-role-chip">{roleLabel}</span>
-                {resolvedVocalRange ? <span className="home-chip">Timbre {resolvedVocalRange}</span> : null}
+          <div className="home-header-main">
+            <div className="home-header-row">
+              <div className="home-identity-copy">
+                <p className="home-card-eyebrow">Ministério em movimento</p>
+                <h1>Bem-vindo, {firstName}</h1>
+              </div>
+
+              <div className="home-header-actions">
+                <button
+                  className="home-header-icon-btn"
+                  type="button"
+                  aria-label="Abrir notificações"
+                  onClick={() => setShowNotificationsModal(true)}
+                >
+                  <FiBell size={18} />
+                  <span className="home-header-badge" aria-hidden="true" />
+                </button>
+
+                <button
+                  className="home-profile-trigger"
+                  type="button"
+                  aria-label="Abrir perfil do usuário"
+                  onClick={() => setShowProfileModal(true)}
+                >
+                  {profileAvatar ? <img src={profileAvatar} alt={resolvedName} /> : <span>{getInitials(resolvedName)}</span>}
+                </button>
               </div>
             </div>
-          </div>
 
-          <button
-            className="home-profile-trigger"
-            type="button"
-            aria-label="Abrir perfil do usuário"
-            onClick={() => setActiveTab("profile")}
-          >
-            {profileAvatar ? <img src={profileAvatar} alt={resolvedName} /> : <span>{getInitials(resolvedName)}</span>}
-          </button>
+            <div className="home-chip-row">
+              <span className="home-role-chip">{roleLabel}</span>
+              {resolvedVocalRange ? <span className="home-chip">Timbre {resolvedVocalRange}</span> : null}
+            </div>
+          </div>
         </header>
 
-        <section className="home-hero-card">
-          <div>
-            <p className="home-hero-kicker">Painel do vocal</p>
-            <h2>Home e Agenda no mesmo fluxo</h2>
-            <p>Veja avisos, publique recados, acompanhe eventos e responda rapidamente quando não puder comparecer.</p>
-          </div>
+        {activeTab !== "members" ? (
+          <>
+            <section className="home-hero-card">
+              <div>
+                <p className="home-hero-kicker">Painel do vocal</p>
+                <h2>Home e Agenda no mesmo fluxo</h2>
+                <p>Veja avisos, publique recados, acompanhe eventos e responda rapidamente quando não puder comparecer.</p>
+              </div>
 
-          <button type="button" className="login-help-btn home-help-btn" onClick={() => setShowHelpModal(true)}>
-            <FiHelpCircle size={18} />
-            AJUDA
-          </button>
-        </section>
+              <button type="button" className="login-help-btn home-help-btn" onClick={() => setShowHelpModal(true)}>
+                <FiHelpCircle size={18} />
+                AJUDA
+              </button>
+            </section>
 
-        <section className="home-toolbar">
-          <label className="home-search-shell" aria-label="Buscar na tela atual">
-            <FiSearch size={18} />
-            <input
-              type="search"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder={resolveSearchPlaceholder(activeTab)}
-            />
-          </label>
-        </section>
+            <section className="home-toolbar">
+              <label className="home-search-shell" aria-label="Buscar na tela atual">
+                <FiSearch size={18} />
+                <input
+                  type="search"
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  placeholder={resolveSearchPlaceholder(activeTab)}
+                />
+              </label>
+            </section>
 
-        <section className="home-summary-strip">
-          <article className="home-summary-card modern">
-            <span>Próximo compromisso</span>
-            <strong>{nextEvent?.title || "Sem evento próximo"}</strong>
-            <p>{nextEvent ? `${nextEvent.dateLabel} • ${nextEvent.time} • ${nextEvent.location}` : "Ainda não existe ensaio, culto ou saída cadastrada."}</p>
-          </article>
+            <section className="home-summary-strip">
+              <article className="home-summary-card modern">
+                <span>Próximo compromisso</span>
+                <strong>{nextEvent?.title || "Sem evento próximo"}</strong>
+                <p>{nextEvent ? `${nextEvent.dateLabel} • ${nextEvent.time} • ${nextEvent.location}` : "Ainda não existe ensaio, culto ou saída cadastrada."}</p>
+              </article>
 
-          <article className="home-summary-card modern">
-            <span>Movimento do mural</span>
-            <strong>{posts.length} publicações</strong>
-            <p>{posts[0]?.title || "Nenhum aviso ou publicação criada até agora."}</p>
-          </article>
-        </section>
+              <article className="home-summary-card modern">
+                <span>Movimento do mural</span>
+                <strong>{posts.length} publicações</strong>
+                <p>{posts[0]?.title || "Nenhum aviso ou publicação criada até agora."}</p>
+              </article>
+            </section>
+          </>
+        ) : null}
 
-        <div className="home-view-tabs" role="tablist" aria-label="Seções da tela inicial">
-          {([
-            ["home", "Home"],
-            ["agenda", "Agenda"],
-            ["songs", "Músicas"],
-            ["profile", "Usuário"],
-          ] as const).map(([tab, label]) => (
-            <button
-              key={tab}
-              type="button"
-              role="tab"
-              aria-selected={activeTab === tab}
-              className={`home-view-tab${activeTab === tab ? " is-active" : ""}`}
-              onClick={() => setActiveTab(tab)}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-
-        <main className="home-main-panel">
+        <main ref={mainPanelRef} className="home-main-panel">
           {activeTab === "home" ? (
             <div className="home-feed-stack">
               {filteredPosts.map((post) => (
@@ -718,6 +865,9 @@ export function HomePage({
 
           {activeTab === "agenda" ? (
             <div className="home-agenda-stack">
+              {agendaStatus ? <p className="home-inline-status">{agendaStatus}</p> : null}
+              {agendaLoading ? <article className="home-empty-card"><h3>Carregando agenda</h3><p>Buscando compromissos salvos no Firestore.</p></article> : null}
+
               {filteredAgendaEvents.map((event) => (
                 <article key={event.id} className="home-agenda-card">
                   <div className="home-card-topline">
@@ -752,7 +902,7 @@ export function HomePage({
                 </article>
               ))}
 
-              {filteredAgendaEvents.length === 0 ? (
+              {!agendaLoading && filteredAgendaEvents.length === 0 ? (
                 <article className="home-empty-card">
                   <h3>Agenda vazia</h3>
                   <p>Nenhum ensaio, saída ou culto foi cadastrado.{canManageAgenda ? " Use o botão + para lançar o primeiro compromisso." : " Quando a agenda for atualizada, os eventos aparecerão aqui."}</p>
@@ -783,108 +933,26 @@ export function HomePage({
             </section>
           ) : null}
 
-          {activeTab === "profile" ? (
+          {activeTab === "members" ? (
             <section className="home-profile-panel">
-              <article className="home-profile-card home-profile-summary-card">
-                <div className="home-profile-summary">
-                  <label className="home-profile-avatar-editor" htmlFor="profile-avatar-input">
-                    {profileAvatar ? <img src={profileAvatar} alt={resolvedName} /> : <span>{getInitials(resolvedName)}</span>}
-                    <span className="home-profile-avatar-badge">
-                      <FiCamera size={14} />
-                    </span>
-                  </label>
-
-                  <div className="home-profile-summary-copy">
-                    <div className="home-card-topline compact">
-                      <span>Meu perfil</span>
-                      <strong>{roleLabel}</strong>
-                    </div>
-                    <h3>{resolvedName}</h3>
-                    <p>Atualize foto, telefone, endereço e dados essenciais do seu cadastro.</p>
-                    <div className="home-chip-row">
-                      {resolvedVocalRange ? <span className="home-chip">Timbre {resolvedVocalRange}</span> : null}
-                      <span className="home-chip">{roleLabel}</span>
-                    </div>
-                  </div>
+              <article className="home-profile-card home-profile-directory-toolbar">
+                <div>
+                  <p className="home-card-eyebrow">Membros</p>
+                  <h3>Membros do vocal</h3>
+                  <p>Consulte o contato interno, localize integrantes e acompanhe os dados liberados para organização da equipe.</p>
                 </div>
 
-                <input id="profile-avatar-input" className="hidden-input" type="file" accept="image/*" onChange={handleProfileAvatarChange} />
-
-                <div className="home-profile-inline-actions">
-                  <label htmlFor="profile-avatar-input" className="home-secondary-action home-inline-label-btn">
-                    Trocar foto
-                  </label>
-                  <button type="button" className="home-secondary-action" onClick={() => setShowLogoutModal(true)}>
-                    <HiOutlineArrowRightOnRectangle size={16} />
-                    Sair
+                <label className="home-search-shell home-profile-search-shell" aria-label="Buscar membros do vocal">
+                  <input
+                    type="search"
+                    value={query}
+                    onChange={(event) => setQuery(event.target.value)}
+                    placeholder={resolveSearchPlaceholder("members")}
+                  />
+                  <button type="button" className="home-search-trigger" onClick={handleDirectorySearchAction} aria-label="Buscar ou atualizar membros" disabled={directoryRefreshing} aria-busy={directoryRefreshing}>
+                    <FiSearch size={18} />
                   </button>
-                </div>
-
-                {profileStatus ? <p className="home-inline-status">{profileStatus}</p> : null}
-              </article>
-
-              <article className="home-profile-card home-profile-edit-card">
-                <div className="home-card-topline compact">
-                  <span>Dados editáveis</span>
-                  <strong>{canManageExtendedProfile ? "Edição ampliada" : "Edição básica"}</strong>
-                </div>
-
-                {!canManageExtendedProfile ? (
-                  <p className="home-profile-note">Nome, estado civil, gênero e timbre são ajustados apenas por administração e secretaria.</p>
-                ) : null}
-
-                <div className="home-profile-form-grid">
-                  <label>
-                    <span>Nome</span>
-                    <input name="name" value={profileDraft.name} onChange={handleProfileFieldChange} disabled={!canManageExtendedProfile || profileSaving} />
-                  </label>
-                  <label>
-                    <span>Telefone</span>
-                    <input name="phone" value={profileDraft.phone} onChange={handleProfileFieldChange} disabled={profileSaving} />
-                  </label>
-                  <label>
-                    <span>CEP</span>
-                    <input name="cep" value={profileDraft.cep} onChange={handleProfileFieldChange} disabled={profileSaving} />
-                  </label>
-                  <label>
-                    <span>Bairro</span>
-                    <input name="neighborhood" value={profileDraft.neighborhood} onChange={handleProfileFieldChange} disabled={profileSaving} />
-                  </label>
-                  <label>
-                    <span>Cidade</span>
-                    <input name="city" value={profileDraft.city} onChange={handleProfileFieldChange} disabled={profileSaving} />
-                  </label>
-                  <label>
-                    <span>Rua</span>
-                    <input name="street" value={profileDraft.street} onChange={handleProfileFieldChange} disabled={profileSaving} />
-                  </label>
-                  <label>
-                    <span>Número</span>
-                    <input name="houseNumber" value={profileDraft.houseNumber} onChange={handleProfileFieldChange} disabled={profileSaving} />
-                  </label>
-                  <label>
-                    <span>Disponibilidade</span>
-                    <input name="availability" value={profileDraft.availability} onChange={handleProfileFieldChange} disabled={profileSaving} />
-                  </label>
-                  <label>
-                    <span>Estado civil</span>
-                    <input name="maritalStatus" value={profileDraft.maritalStatus} onChange={handleProfileFieldChange} disabled={!canManageExtendedProfile || profileSaving} />
-                  </label>
-                  <label>
-                    <span>Gênero</span>
-                    <input name="gender" value={profileDraft.gender} onChange={handleProfileFieldChange} disabled={!canManageExtendedProfile || profileSaving} />
-                  </label>
-                  <label className="home-profile-form-span">
-                    <span>Timbre</span>
-                    <input name="vocalRange" value={profileDraft.vocalRange} onChange={handleProfileFieldChange} disabled={!canManageExtendedProfile || profileSaving} />
-                  </label>
-                </div>
-
-                <div className="home-profile-footer">
-                  <button type="button" className="home-primary-action" onClick={saveProfile} disabled={profileSaving}>
-                    Salvar alterações
-                  </button>
-                </div>
+                </label>
               </article>
 
               <article className="home-profile-card home-directory-card">
@@ -902,7 +970,7 @@ export function HomePage({
                 <div className="home-directory-layout">
                   <div className="home-directory-list">
                     {directoryLoading ? <p className="home-directory-empty">Carregando membros...</p> : null}
-                    {!directoryLoading && filteredDirectoryMembers.length === 0 ? <p className="home-directory-empty">Nenhum outro membro encontrado para este filtro.</p> : null}
+                    {!directoryLoading && filteredDirectoryMembers.length === 0 ? <p className="home-directory-empty">Nenhum membro encontrado para este filtro.</p> : null}
 
                     {filteredDirectoryMembers.map((member) => (
                       <button
@@ -918,6 +986,7 @@ export function HomePage({
                         <div className="home-directory-copy">
                           <strong>{member.name}</strong>
                           <span>{resolveDirectoryRoleLabel(member)}</span>
+                          {member.uid === currentUid ? <small>Seu perfil</small> : null}
                           {member.vocalRange ? <small>Timbre {member.vocalRange}</small> : null}
                         </div>
                       </button>
@@ -991,26 +1060,44 @@ export function HomePage({
         ) : null}
 
         <nav className="home-bottom-nav" aria-label="Navegação principal">
-          <button className={`nav-icon-btn${activeTab === "home" ? " is-active" : ""}`} type="button" aria-label="Home" onClick={() => setActiveTab("home")}>
+          <button className={`nav-icon-btn${activeTab === "home" ? " is-active" : ""}`} type="button" aria-label="Home" onClick={() => openTab("home")}>
             <FiHome size={22} />
             <span>Home</span>
           </button>
 
-          <button className={`nav-icon-btn${activeTab === "agenda" ? " is-active" : ""}`} type="button" aria-label="Agenda" onClick={() => setActiveTab("agenda")}>
+          <button className={`nav-icon-btn${activeTab === "agenda" ? " is-active" : ""}`} type="button" aria-label="Agenda" onClick={() => openTab("agenda")}>
             <LuCalendarDays size={22} />
             <span>Agenda</span>
           </button>
 
-          <button className={`nav-icon-btn${activeTab === "songs" ? " is-active" : ""}`} type="button" aria-label="Músicas" onClick={() => setActiveTab("songs")}>
+          <button className={`nav-icon-btn${activeTab === "songs" ? " is-active" : ""}`} type="button" aria-label="Músicas" onClick={() => openTab("songs")}>
             <GiMusicalScore size={24} />
             <span>Músicas</span>
           </button>
 
-          <button className={`nav-icon-btn${activeTab === "profile" ? " is-active" : ""}`} type="button" aria-label="Usuário" onClick={() => setActiveTab("profile")}>
-            <FiUser size={22} />
-            <span>Usuário</span>
+          <button className={`nav-icon-btn${activeTab === "members" ? " is-active" : ""}`} type="button" aria-label="Membros" onClick={() => openTab("members")}>
+            <FiUsers size={22} />
+            <span>Membros</span>
           </button>
         </nav>
+
+        <AvatarEditorModal
+          open={showProfileAvatarEditor}
+          imageSrc={profileAvatarEditorSource}
+          title="Ajuste sua foto de perfil"
+          description="Corte, aproxime, afaste e ajuste a aparência antes de atualizar o seu perfil."
+          onClose={() => {
+            setShowProfileAvatarEditor(false);
+            setProfileAvatarEditorSource("");
+          }}
+          onApply={async (dataUrl) => {
+            setProfileAvatarPreview(dataUrl);
+            setProfileAvatarDataUrl(dataUrl);
+            setShowProfileAvatarEditor(false);
+            setProfileAvatarEditorSource("");
+            setProfileStatus("");
+          }}
+        />
       </div>
 
       {showComposer ? (
@@ -1061,8 +1148,8 @@ export function HomePage({
               <button type="button" className="home-secondary-action" onClick={() => setShowComposer(false)}>
                 Cancelar
               </button>
-              <button type="button" className="home-primary-action" onClick={publishComposerEntry}>
-                Publicar
+              <button type="button" className="home-primary-action" onClick={() => void publishComposerEntry()} disabled={composerSubmitting}>
+                {composerSubmitting ? "Salvando..." : "Publicar"}
               </button>
             </div>
           </div>
@@ -1085,7 +1172,156 @@ export function HomePage({
             <div className="home-help-list">
               <p>No Home você vê avisos, imagens e recados internos.</p>
               <p>Na Agenda você acompanha ensaios, saídas e horários com espaço para justificar ausência.</p>
-              <p>Na aba Usuário você atualiza seu perfil e encontra os contatos internos liberados para o ministério.</p>
+              <p>No ícone do perfil você atualiza seus dados. Na aba Membros você encontra os contatos internos liberados para o ministério.</p>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {showProfileModal ? (
+        <div className="home-modal-backdrop" role="presentation" onClick={() => setShowProfileModal(false)}>
+          <div className="home-modal-card home-profile-modal-card" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
+            <div className="home-modal-header">
+              <div>
+                <p className="home-card-eyebrow">Meu perfil</p>
+                <h3>Editar cadastro</h3>
+              </div>
+              <button type="button" className="home-modal-close" onClick={() => setShowProfileModal(false)}>
+                Fechar
+              </button>
+            </div>
+
+            <section className="home-profile-panel">
+              <article className="home-profile-card home-profile-summary-card">
+                <div className="home-profile-summary">
+                  <label className="home-profile-avatar-editor" htmlFor="profile-avatar-input">
+                    {profileAvatar ? <img src={profileAvatar} alt={resolvedName} /> : <span>{getInitials(resolvedName)}</span>}
+                    <span className="home-profile-avatar-badge">
+                      <FiCamera size={14} />
+                    </span>
+                  </label>
+
+                  <div className="home-profile-summary-copy">
+                    <div className="home-card-topline compact">
+                      <span>Meu perfil</span>
+                      <strong>{roleLabel}</strong>
+                    </div>
+                    <h3>{resolvedName}</h3>
+                    <p>Atualize foto, telefone, endereço e dados essenciais do seu cadastro.</p>
+                    <div className="home-chip-row">
+                      {resolvedVocalRange ? <span className="home-chip">Timbre {resolvedVocalRange}</span> : null}
+                      <span className="home-chip">{roleLabel}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <input id="profile-avatar-input" className="hidden-input" type="file" accept="image/*" onChange={handleProfileAvatarChange} />
+
+                <div className="home-profile-inline-actions">
+                  <label htmlFor="profile-avatar-input" className="home-secondary-action home-inline-label-btn">
+                    Ajustar foto
+                  </label>
+                  <button type="button" className="home-secondary-action" onClick={() => setShowLogoutModal(true)}>
+                    <HiOutlineArrowRightOnRectangle size={16} />
+                    Sair
+                  </button>
+                </div>
+
+                {profileStatus ? <p className="home-inline-status">{profileStatus}</p> : null}
+              </article>
+
+              <article className="home-profile-card home-profile-edit-card">
+                <div className="home-card-topline compact">
+                  <span>Dados editáveis</span>
+                  <strong>{canManageExtendedProfile ? "Edição ampliada" : "Edição básica"}</strong>
+                </div>
+
+                {!canManageExtendedProfile ? (
+                  <p className="home-profile-note">Nome, estado civil, gênero e timbre são ajustados apenas por administração e secretaria.</p>
+                ) : null}
+
+                <div className="home-profile-form-grid">
+                  <label>
+                    <span>Nome</span>
+                    <input name="name" value={profileDraft.name} onChange={handleProfileFieldChange} disabled={!canManageExtendedProfile || profileSaving} />
+                  </label>
+                  <label>
+                    <span>Telefone</span>
+                    <input name="phone" value={profileDraft.phone} onChange={handleProfileFieldChange} disabled={profileSaving} />
+                  </label>
+                  <label>
+                    <span>CEP</span>
+                    <input name="cep" value={profileDraft.cep} onChange={handleProfileFieldChange} disabled={profileSaving} />
+                  </label>
+                  <label>
+                    <span>Bairro</span>
+                    <input name="neighborhood" value={profileDraft.neighborhood} onChange={handleProfileFieldChange} disabled={profileSaving} />
+                  </label>
+                  <label>
+                    <span>Cidade</span>
+                    <input name="city" value={profileDraft.city} onChange={handleProfileFieldChange} disabled={profileSaving} />
+                  </label>
+                  <label>
+                    <span>Rua</span>
+                    <input name="street" value={profileDraft.street} onChange={handleProfileFieldChange} disabled={profileSaving} />
+                  </label>
+                  <label>
+                    <span>Número</span>
+                    <input name="houseNumber" value={profileDraft.houseNumber} onChange={handleProfileFieldChange} disabled={profileSaving} />
+                  </label>
+                  <label>
+                    <span>Disponibilidade</span>
+                    <input name="availability" value={profileDraft.availability} onChange={handleProfileFieldChange} disabled={profileSaving} />
+                  </label>
+                  <label>
+                    <span>Estado civil</span>
+                    <input name="maritalStatus" value={profileDraft.maritalStatus} onChange={handleProfileFieldChange} disabled={!canManageExtendedProfile || profileSaving} />
+                  </label>
+                  <label>
+                    <span>Gênero</span>
+                    <input name="gender" value={profileDraft.gender} onChange={handleProfileFieldChange} disabled={!canManageExtendedProfile || profileSaving} />
+                  </label>
+                  <label className="home-profile-form-span">
+                    <span>Timbre</span>
+                    <input name="vocalRange" value={profileDraft.vocalRange} onChange={handleProfileFieldChange} disabled={!canManageExtendedProfile || profileSaving} />
+                  </label>
+                </div>
+
+                <div className="home-profile-footer">
+                  <button type="button" className="home-primary-action" onClick={saveProfile} disabled={profileSaving}>
+                    Salvar alterações
+                  </button>
+                </div>
+              </article>
+            </section>
+          </div>
+        </div>
+      ) : null}
+
+      {showNotificationsModal ? (
+        <div className="home-modal-backdrop" role="presentation" onClick={() => setShowNotificationsModal(false)}>
+          <div className="home-modal-card compact" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
+            <div className="home-modal-header">
+              <div>
+                <p className="home-card-eyebrow">Notificações</p>
+                <h3>Central de avisos</h3>
+              </div>
+              <button type="button" className="home-modal-close" onClick={() => setShowNotificationsModal(false)}>
+                Fechar
+              </button>
+            </div>
+
+            <div className="home-help-list">
+              {notificationItems.length > 0 ? (
+                notificationItems.map((event) => (
+                  <p key={event.id}>{event.kind}: {event.title} em {event.dateLabel} às {event.time}.</p>
+                ))
+              ) : (
+                <>
+                  <p>Aqui vão aparecer novos avisos, publicações e alterações importantes da agenda.</p>
+                  <p>No momento, não há notificações novas para mostrar.</p>
+                </>
+              )}
             </div>
           </div>
         </div>

@@ -544,12 +544,12 @@ export function RegisterPage({
 
             <span className="register-avatar-copy">
               <strong>Adicione uma foto</strong>
-              <small>Escolha uma imagem clara para identificar o integrante no vocal.</small>
+              <small>Escolha uma imagem clara e ajuste o enquadramento antes de salvar.</small>
             </span>
 
             <span className="register-avatar-action">
               <Camera size={18} strokeWidth={2.2} />
-              Escolher imagem
+              Escolher e ajustar
             </span>
           </span>
           <input

@@ -21,6 +21,33 @@ service cloud.firestore {
 			return signedIn() && currentMember().data.leadershipRole == 'Secretário';
 		}
 
+		function isDirectionLeader() {
+			return signedIn() && (
+				currentMember().data.leadershipRole == 'Maestro' ||
+				currentMember().data.leadershipRole == 'Secretário' ||
+				currentMember().data.leadershipRole == 'Vice-Secretário'
+			);
+		}
+
+		function hasPermission(permission) {
+			return signedIn() &&
+				currentMember().data.permissions is list &&
+				currentMember().data.permissions.hasAny([permission]);
+		}
+
+		function canManageAgendaContent() {
+			return isAdmin() ||
+				isDirectionLeader() ||
+				hasPermission('Mexer na agenda') ||
+				hasPermission('Postar avisos');
+		}
+
+		function canCommentOnInternalContent() {
+			return canManageAgendaContent() ||
+				hasPermission('Comentar') ||
+				hasPermission('Comentar em agenda e avisos');
+		}
+
 		function isBootstrapAdmin() {
 			return signedIn() && request.auth.token.email == 'admin@vocalsalvosporcristo.app';
 		}
@@ -250,6 +277,117 @@ service cloud.firestore {
 				request.resource.data.availability == get(/databases/$(database)/documents/members/$(userId)).data.availability;
 		}
 
+		function hasValidCommentKeys(comment) {
+			return comment.keys().hasAll([
+					'id',
+					'author',
+					'role',
+					'text',
+					'createdAt',
+					'createdByUid'
+				]) &&
+				comment.keys().hasOnly([
+					'id',
+					'author',
+					'role',
+					'text',
+					'createdAt',
+					'createdByUid'
+				]);
+		}
+
+		function hasValidCommentEntry(comment) {
+			return comment is map &&
+				hasValidCommentKeys(comment) &&
+				comment.id is string &&
+				comment.id.size() <= 80 &&
+				comment.author is string &&
+				comment.author.size() >= 1 &&
+				comment.author.size() <= 80 &&
+				comment.role is string &&
+				comment.role.size() <= 40 &&
+				comment.text is string &&
+				comment.text.size() >= 1 &&
+				comment.text.size() <= 500 &&
+				comment.createdAt is string &&
+				comment.createdAt.size() <= 40 &&
+				comment.createdByUid is string &&
+				comment.createdByUid.size() <= 128;
+		}
+
+		function hasValidAgendaEventKeys() {
+			return request.resource.data.keys().hasAll([
+					'id',
+					'kind',
+					'title',
+					'scheduledDate',
+					'time',
+					'location',
+					'note',
+					'author',
+					'createdByUid',
+					'comments',
+					'createdAt',
+					'updatedAt'
+				]) &&
+				request.resource.data.keys().hasOnly([
+					'id',
+					'kind',
+					'title',
+					'scheduledDate',
+					'time',
+					'location',
+					'note',
+					'author',
+					'createdByUid',
+					'comments',
+					'createdAt',
+					'updatedAt'
+				]);
+		}
+
+		function hasValidAgendaEventData(eventId) {
+			return hasValidAgendaEventKeys() &&
+				request.resource.data.id == eventId &&
+				request.resource.data.kind is string &&
+				request.resource.data.kind.size() >= 1 &&
+				request.resource.data.kind.size() <= 30 &&
+				request.resource.data.title is string &&
+				request.resource.data.title.size() >= 3 &&
+				request.resource.data.title.size() <= 120 &&
+				request.resource.data.scheduledDate is string &&
+				request.resource.data.scheduledDate.size() <= 20 &&
+				request.resource.data.time is string &&
+				request.resource.data.time.size() <= 10 &&
+				request.resource.data.location is string &&
+				request.resource.data.location.size() <= 120 &&
+				request.resource.data.note is string &&
+				request.resource.data.note.size() >= 1 &&
+				request.resource.data.note.size() <= 2000 &&
+				request.resource.data.author is string &&
+				request.resource.data.author.size() >= 1 &&
+				request.resource.data.author.size() <= 80 &&
+				request.resource.data.createdByUid is string &&
+				request.resource.data.createdByUid.size() <= 128 &&
+				request.resource.data.comments is list &&
+				request.resource.data.comments.size() <= 200 &&
+				request.resource.data.comments.all(comment, hasValidCommentEntry(comment)) &&
+				request.resource.data.createdAt is timestamp &&
+				request.resource.data.updatedAt is timestamp;
+		}
+
+		function agendaCoreFieldsUnchanged() {
+			return request.resource.data.id == resource.data.id &&
+				request.resource.data.kind == resource.data.kind &&
+				request.resource.data.title == resource.data.title &&
+				request.resource.data.scheduledDate == resource.data.scheduledDate &&
+				request.resource.data.time == resource.data.time &&
+				request.resource.data.location == resource.data.location &&
+				request.resource.data.note == resource.data.note &&
+				request.resource.data.author == resource.data.author &&
+				request.resource.data.createdByUid == resource.data.createdByUid;
+		}
+
 		match /members/{userId} {
 			allow get: if isOwner(userId) || isAdmin();
 			allow list: if isAdmin();
@@ -282,6 +420,23 @@ service cloud.firestore {
 				hasValidDirectoryData(userId) &&
 				directoryMatchesMemberProfile(userId);
 			allow delete: if isAdmin();
+		}
+
+		match /agendaEvents/{eventId} {
+			allow get, list: if signedIn();
+			allow create: if canManageAgendaContent() &&
+				hasValidAgendaEventData(eventId);
+			allow update: if (
+					canManageAgendaContent() &&
+					hasValidAgendaEventData(eventId) &&
+					request.resource.data.createdAt == resource.data.createdAt
+				) || (
+					canCommentOnInternalContent() &&
+					hasValidAgendaEventData(eventId) &&
+					request.resource.data.createdAt == resource.data.createdAt &&
+					agendaCoreFieldsUnchanged()
+				);
+			allow delete: if canManageAgendaContent();
 		}
 
 		match /{document=**} {
