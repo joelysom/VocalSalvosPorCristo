@@ -1,0 +1,291 @@
+rules_version = '2';
+service cloud.firestore {
+	match /databases/{database}/documents {
+		function signedIn() {
+			return request.auth != null;
+		}
+
+		function isOwner(userId) {
+			return signedIn() && request.auth.uid == userId;
+		}
+
+		function currentMember() {
+			return get(/databases/$(database)/documents/members/$(request.auth.uid));
+		}
+
+		function isAdmin() {
+			return signedIn() && currentMember().data.accountLevel == 'administration';
+		}
+
+		function isSecretary() {
+			return signedIn() && currentMember().data.leadershipRole == 'Secretário';
+		}
+
+		function isBootstrapAdmin() {
+			return signedIn() && request.auth.token.email == 'admin@vocalsalvosporcristo.app';
+		}
+
+		function hasValidKeys() {
+			return request.resource.data.keys().hasAll([
+					'uid',
+					'email',
+					'name',
+					'phone',
+					'phoneNormalized',
+					'cep',
+					'neighborhood',
+					'city',
+					'street',
+					'houseNumber',
+					'maritalStatus',
+					'gender',
+					'vocalRange',
+					'availability',
+					'avatarDataUrl',
+					'accountLevel',
+					'leadershipRole',
+					'permissions',
+					'createdAt',
+					'updatedAt'
+				]) &&
+				request.resource.data.keys().hasOnly([
+					'uid',
+					'email',
+					'name',
+					'phone',
+					'phoneNormalized',
+					'cep',
+					'neighborhood',
+					'city',
+					'street',
+					'houseNumber',
+					'maritalStatus',
+					'gender',
+					'vocalRange',
+					'availability',
+					'avatarDataUrl',
+					'accountLevel',
+					'leadershipRole',
+					'permissions',
+					'createdAt',
+					'updatedAt'
+				]);
+		}
+
+		function hasCommonValidProfileData(userId) {
+			return hasValidKeys() &&
+				request.resource.data.uid == userId &&
+				request.resource.data.name is string &&
+				request.resource.data.name.size() >= 3 &&
+				request.resource.data.name.size() <= 80 &&
+				request.resource.data.phone is string &&
+				request.resource.data.phone.size() <= 24 &&
+				request.resource.data.phoneNormalized is string &&
+				request.resource.data.phoneNormalized.size() <= 16 &&
+				request.resource.data.cep is string &&
+				request.resource.data.cep.size() <= 12 &&
+				request.resource.data.neighborhood is string &&
+				request.resource.data.neighborhood.size() <= 80 &&
+				request.resource.data.city is string &&
+				request.resource.data.city.size() <= 80 &&
+				request.resource.data.street is string &&
+				request.resource.data.street.size() <= 120 &&
+				request.resource.data.houseNumber is string &&
+				request.resource.data.houseNumber.size() <= 20 &&
+				request.resource.data.maritalStatus is string &&
+				request.resource.data.maritalStatus.size() <= 40 &&
+				request.resource.data.gender is string &&
+				request.resource.data.gender.size() <= 20 &&
+				request.resource.data.vocalRange is string &&
+				request.resource.data.vocalRange.size() <= 40 &&
+				request.resource.data.availability is string &&
+				request.resource.data.availability.size() <= 60 &&
+				request.resource.data.accountLevel is string &&
+				request.resource.data.accountLevel.size() <= 20 &&
+				request.resource.data.leadershipRole is string &&
+				request.resource.data.leadershipRole.size() <= 40 &&
+				request.resource.data.permissions is list &&
+				request.resource.data.permissions.size() <= 20 &&
+				request.resource.data.avatarDataUrl is string &&
+				request.resource.data.avatarDataUrl.size() <= 700000 &&
+				(
+					request.resource.data.avatarDataUrl.size() == 0 ||
+					request.resource.data.avatarDataUrl.matches('data:image/.*') ||
+					request.resource.data.avatarDataUrl.matches('https://.*')
+				) &&
+				request.resource.data.createdAt is timestamp &&
+				request.resource.data.updatedAt is timestamp;
+		}
+
+		function hasValidOwnedProfileData(userId) {
+			return hasCommonValidProfileData(userId) &&
+				request.resource.data.email == request.auth.token.email;
+		}
+
+		function hasMemberDefaultPrivileges() {
+			return request.resource.data.accountLevel == 'member' &&
+				request.resource.data.leadershipRole == '' &&
+				request.resource.data.permissions.hasAll([
+					'Ver músicas',
+					'Receber avisos, ensaios e documentos',
+					'Notificar atraso ou imprevisto',
+					'Solicitar alteração de dado',
+					'Comentar em agenda e avisos'
+				]) &&
+				request.resource.data.permissions.hasOnly([
+					'Ver músicas',
+					'Receber avisos, ensaios e documentos',
+					'Notificar atraso ou imprevisto',
+					'Solicitar alteração de dado',
+					'Comentar em agenda e avisos'
+				]);
+		}
+
+		function hasBootstrapAdminPrivileges() {
+			return isBootstrapAdmin() &&
+				request.resource.data.accountLevel == 'administration' &&
+				request.resource.data.leadershipRole == '' &&
+				request.resource.data.permissions.hasAll([
+					'Adicionar músicas',
+					'Adicionar avisos',
+					'Adicionar datas de ensaios',
+					'Adicionar documentos e partituras',
+					'Cadastrar membros',
+					'Postar avisos',
+					'Alterar dados',
+					'Mexer na agenda',
+					'Comentar'
+				]) &&
+				request.resource.data.permissions.hasOnly([
+					'Adicionar músicas',
+					'Adicionar avisos',
+					'Adicionar datas de ensaios',
+					'Adicionar documentos e partituras',
+					'Cadastrar membros',
+					'Postar avisos',
+					'Alterar dados',
+					'Mexer na agenda',
+					'Comentar'
+				]);
+		}
+
+		function ownerKeepsPrivilegesUntouched() {
+			return request.resource.data.accountLevel == resource.data.accountLevel &&
+				request.resource.data.leadershipRole == resource.data.leadershipRole &&
+				request.resource.data.permissions == resource.data.permissions;
+		}
+
+		function ownerKeepsSensitiveDetailsUntouched() {
+			return request.resource.data.name == resource.data.name &&
+				request.resource.data.maritalStatus == resource.data.maritalStatus &&
+				request.resource.data.gender == resource.data.gender &&
+				request.resource.data.vocalRange == resource.data.vocalRange;
+		}
+
+		function hasValidDirectoryKeys() {
+			return request.resource.data.keys().hasAll([
+					'uid',
+					'name',
+					'phone',
+					'phoneNormalized',
+					'avatarDataUrl',
+					'vocalRange',
+					'leadershipRole',
+					'accountLevel',
+					'availability',
+					'updatedAt'
+				]) &&
+				request.resource.data.keys().hasOnly([
+					'uid',
+					'name',
+					'phone',
+					'phoneNormalized',
+					'avatarDataUrl',
+					'vocalRange',
+					'leadershipRole',
+					'accountLevel',
+					'availability',
+					'updatedAt'
+				]);
+		}
+
+		function hasValidDirectoryData(userId) {
+			return hasValidDirectoryKeys() &&
+				request.resource.data.uid == userId &&
+				request.resource.data.name is string &&
+				request.resource.data.name.size() >= 3 &&
+				request.resource.data.name.size() <= 80 &&
+				request.resource.data.phone is string &&
+				request.resource.data.phone.size() <= 24 &&
+				request.resource.data.phoneNormalized is string &&
+				request.resource.data.phoneNormalized.size() <= 16 &&
+				request.resource.data.vocalRange is string &&
+				request.resource.data.vocalRange.size() <= 40 &&
+				request.resource.data.leadershipRole is string &&
+				request.resource.data.leadershipRole.size() <= 40 &&
+				request.resource.data.accountLevel is string &&
+				request.resource.data.accountLevel.size() <= 20 &&
+				request.resource.data.availability is string &&
+				request.resource.data.availability.size() <= 60 &&
+				request.resource.data.avatarDataUrl is string &&
+				request.resource.data.avatarDataUrl.size() <= 700000 &&
+				(
+					request.resource.data.avatarDataUrl.size() == 0 ||
+					request.resource.data.avatarDataUrl.matches('data:image/.*') ||
+					request.resource.data.avatarDataUrl.matches('https://.*')
+				) &&
+				request.resource.data.updatedAt is timestamp;
+		}
+
+		function directoryMatchesMemberProfile(userId) {
+			return exists(/databases/$(database)/documents/members/$(userId)) &&
+				request.resource.data.uid == get(/databases/$(database)/documents/members/$(userId)).data.uid &&
+				request.resource.data.name == get(/databases/$(database)/documents/members/$(userId)).data.name &&
+				request.resource.data.phone == get(/databases/$(database)/documents/members/$(userId)).data.phone &&
+				request.resource.data.phoneNormalized == get(/databases/$(database)/documents/members/$(userId)).data.phoneNormalized &&
+				request.resource.data.avatarDataUrl == get(/databases/$(database)/documents/members/$(userId)).data.avatarDataUrl &&
+				request.resource.data.vocalRange == get(/databases/$(database)/documents/members/$(userId)).data.vocalRange &&
+				request.resource.data.leadershipRole == get(/databases/$(database)/documents/members/$(userId)).data.leadershipRole &&
+				request.resource.data.accountLevel == get(/databases/$(database)/documents/members/$(userId)).data.accountLevel &&
+				request.resource.data.availability == get(/databases/$(database)/documents/members/$(userId)).data.availability;
+		}
+
+		match /members/{userId} {
+			allow get: if isOwner(userId) || isAdmin();
+			allow list: if isAdmin();
+			allow create: if isOwner(userId) &&
+				hasValidOwnedProfileData(userId) &&
+				(hasMemberDefaultPrivileges() || hasBootstrapAdminPrivileges());
+			allow update: if (
+					isOwner(userId) &&
+					hasValidOwnedProfileData(userId) &&
+					request.resource.data.createdAt == resource.data.createdAt &&
+					ownerKeepsPrivilegesUntouched() &&
+					ownerKeepsSensitiveDetailsUntouched()
+				) || (
+					isOwner(userId) &&
+					(isAdmin() || isSecretary()) &&
+					hasValidOwnedProfileData(userId) &&
+					request.resource.data.createdAt == resource.data.createdAt &&
+					ownerKeepsPrivilegesUntouched()
+				) || (
+					isAdmin() &&
+					hasCommonValidProfileData(userId) &&
+					request.resource.data.createdAt == resource.data.createdAt
+				);
+			allow delete: if isAdmin();
+		}
+
+		match /memberDirectory/{userId} {
+			allow get, list: if signedIn();
+			allow create, update: if (isOwner(userId) || isAdmin()) &&
+				hasValidDirectoryData(userId) &&
+				directoryMatchesMemberProfile(userId);
+			allow delete: if isAdmin();
+		}
+
+		match /{document=**} {
+			allow read, write: if false;
+		}
+	}
+}

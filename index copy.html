@@ -1,0 +1,749 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+  <title>Vocal Salvos por Cristo</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@700&family=Poppins:wght@700&family=Roboto:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --gold: #FCDA78;
+      --gold-dark: #DEB43A;
+      --orange: #EC8441;
+      --red: #ED4B4B;
+      --white: #FFF;
+      --placeholder: #D8D8D8;
+      --text-white: rgba(255,255,255,1);
+    }
+
+    body {
+      font-family: Roboto, -apple-system, Helvetica, sans-serif;
+      background: #111;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      min-height: 100vh;
+    }
+
+    .app-shell {
+      width: 430px;
+      height: 932px;
+      position: relative;
+      overflow: hidden;
+      background: #FFFAFA;
+    }
+
+    /* ---- PAGES ---- */
+    .page {
+      display: none;
+      width: 100%;
+      height: 100%;
+      position: absolute;
+      inset: 0;
+    }
+    .page.active { display: block; }
+
+    /* ---- SHARED: full-bleed bg image ---- */
+    .page-bg {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+      position: absolute;
+      inset: 0;
+    }
+
+    /* ---- SHARED: back button ---- */
+    .back-btn {
+      width: 42px;
+      height: 42px;
+      border-radius: 50%;
+      border: 1px solid var(--white);
+      background: transparent;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      position: absolute;
+      left: 20px;
+      top: 7px;
+      z-index: 10;
+    }
+    .back-btn svg { flex-shrink: 0; }
+
+    /* ---- SHARED: ajuda link ---- */
+    .ajuda-link {
+      font-family: PoetsenOne, Roboto, sans-serif;
+      font-size: 24px;
+      font-weight: 400;
+      color: var(--red);
+      text-align: center;
+      text-shadow: 0 4px 4px rgba(0,0,0,0.25);
+      -webkit-text-stroke: 1px #000;
+      cursor: pointer;
+      position: absolute;
+      left: 50%;
+      transform: translateX(-50%);
+      white-space: nowrap;
+    }
+
+    /* ---- SHARED: page title ---- */
+    .page-title {
+      font-family: Montserrat, sans-serif;
+      font-size: 24px;
+      font-weight: 700;
+      color: var(--gold);
+      text-align: center;
+      position: absolute;
+      left: 50%;
+      transform: translateX(-50%);
+      white-space: nowrap;
+    }
+
+    /* ---- SHARED: field group ---- */
+    .field-group {
+      position: absolute;
+      width: 376px;
+    }
+    .field-label {
+      font-family: Roboto, sans-serif;
+      font-size: 20px;
+      font-weight: 500;
+      color: var(--white);
+      margin-bottom: 6px;
+      display: block;
+    }
+    .field-input-wrap {
+      width: 100%;
+      height: 71px;
+      border-radius: 9px;
+      border: 2px solid var(--gold);
+      background: rgba(217,217,217,0);
+      display: flex;
+      align-items: center;
+      padding: 0 14px;
+      gap: 10px;
+    }
+    .field-input-wrap input {
+      flex: 1;
+      background: transparent;
+      border: none;
+      outline: none;
+      font-family: Roboto, sans-serif;
+      font-size: 20px;
+      font-weight: 400;
+      color: var(--white);
+      min-width: 0;
+    }
+    .field-input-wrap input::placeholder { color: var(--placeholder); }
+    .field-input-wrap .field-icon { flex-shrink: 0; }
+    .field-input-wrap select {
+      flex: 1;
+      background: transparent;
+      border: none;
+      outline: none;
+      font-family: Roboto, sans-serif;
+      font-size: 20px;
+      font-weight: 400;
+      color: var(--placeholder);
+      appearance: none;
+      -webkit-appearance: none;
+      cursor: pointer;
+      min-width: 0;
+    }
+    .field-input-wrap select option { color: #333; background: #fff; }
+
+    /* ---- SHARED: next arrow button ---- */
+    .next-arrow-btn {
+      width: 81px;
+      height: 48px;
+      cursor: pointer;
+      display: block;
+      position: absolute;
+      left: 50%;
+      transform: translateX(-50%);
+      filter: drop-shadow(0 4px 4px #000);
+    }
+
+    /* ===================== */
+    /*  PAGE 1 — LOGIN       */
+    /* ===================== */
+    #page-login .login-email-field {
+      width: 381px;
+      height: 73px;
+      border-radius: 9px;
+      border: 2px solid var(--gold);
+      background: transparent;
+      display: flex;
+      align-items: center;
+      padding: 0 14px;
+      position: absolute;
+      left: 25px;
+      top: 439px;
+    }
+    #page-login .login-email-field input {
+      flex: 1;
+      background: transparent;
+      border: none;
+      outline: none;
+      font-family: Roboto, sans-serif;
+      font-size: 20px;
+      font-weight: 600;
+      color: var(--white);
+    }
+    #page-login .login-email-field input::placeholder { color: var(--white); font-weight: 600; }
+
+    #page-login .login-password-field {
+      width: 381px;
+      height: 73px;
+      border-radius: 9px;
+      border: 2px solid var(--gold);
+      background: transparent;
+      display: flex;
+      align-items: center;
+      padding: 0 15px;
+      position: absolute;
+      left: 24px;
+      top: 528px;
+    }
+    #page-login .login-password-field input {
+      flex: 1;
+      background: transparent;
+      border: none;
+      outline: none;
+      font-family: Roboto, sans-serif;
+      font-size: 20px;
+      font-weight: 600;
+      color: var(--white);
+    }
+    #page-login .login-password-field input::placeholder { color: var(--white); font-weight: 600; }
+
+    .login-enter-btn {
+      width: 381px;
+      height: 71px;
+      border-radius: 35px;
+      background: linear-gradient(0deg, var(--gold), var(--gold));
+      border: none;
+      cursor: pointer;
+      position: absolute;
+      left: 32px;
+      top: 671px;
+      font-family: Poppins, sans-serif;
+      font-size: 24px;
+      font-weight: 700;
+      color: var(--white);
+      letter-spacing: 0.5px;
+    }
+    .login-enter-btn:hover { filter: brightness(1.05); }
+
+    .login-register-btn {
+      width: 381px;
+      height: 61px;
+      border-radius: 35px;
+      border: 2px solid var(--gold);
+      background: var(--white);
+      box-shadow: 0 4px 4px rgba(0,0,0,0.25);
+      cursor: pointer;
+      position: absolute;
+      left: 33px;
+      top: 758px;
+      font-family: Roboto, sans-serif;
+      font-size: 21px;
+      font-weight: 700;
+      color: var(--gold-dark);
+    }
+    .login-register-btn:hover { background: #fafafa; }
+
+    #page-login .ajuda-link { top: 879px; }
+
+    /* ===================== */
+    /*  PAGE 2 — REGISTER 1 */
+    /* ===================== */
+    #page-reg1 .page-title { top: 53px; }
+    #page-reg1 .ajuda-link { top: 886px; }
+
+    .reg-next-img { top: 705px; }
+
+    /* ===================== */
+    /*  PAGE 3 — REGISTER 2 */
+    /* ===================== */
+    #page-reg2 .page-title { top: 53px; }
+    #page-reg2 .ajuda-link { top: 886px; }
+
+    /* ===================== */
+    /*  PAGE 4 — REGISTER 3 */
+    /* ===================== */
+    #page-reg3 .page-title { top: 53px; }
+    #page-reg3 .ajuda-link { top: 886px; }
+
+    .avatar-upload-wrap {
+      width: 171px;
+      height: 162px;
+      position: absolute;
+      left: 128px;
+      top: 490px;
+    }
+    .avatar-upload-box {
+      width: 171px;
+      height: 162px;
+      border-radius: 61px;
+      border: 3px solid var(--orange);
+      background: var(--white);
+      box-shadow: 0 4px 4px rgba(0,0,0,0.2);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      cursor: pointer;
+    }
+    .avatar-upload-box img { width: 89px; height: 89px; object-fit: contain; }
+    .avatar-edit-badge {
+      width: 46px;
+      height: 44px;
+      border-radius: 50%;
+      background: var(--orange);
+      position: absolute;
+      right: 0;
+      bottom: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+    }
+    .avatar-edit-badge img { width: 23px; height: 22px; }
+
+    .finalizar-btn {
+      width: 381px;
+      height: 61px;
+      border-radius: 35px;
+      border: 2px solid var(--gold);
+      background: var(--white);
+      box-shadow: 0 4px 4px rgba(0,0,0,0.25);
+      cursor: pointer;
+      position: absolute;
+      left: 27px;
+      top: 683px;
+      font-family: Roboto, sans-serif;
+      font-size: 21px;
+      font-weight: 700;
+      color: var(--gold-dark);
+    }
+    .finalizar-btn:hover { background: #fafafa; }
+
+    /* ===================== */
+    /*  PAGE 5 — HOME        */
+    /* ===================== */
+    #page-home {
+      background: var(--white);
+    }
+
+    .home-header {
+      width: 100%;
+      height: 63px;
+      background: var(--white);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: absolute;
+      top: 0;
+      left: 0;
+      z-index: 10;
+    }
+
+    .home-back-btn {
+      position: absolute;
+      left: 16px;
+      top: 22px;
+      cursor: pointer;
+      background: none;
+      border: none;
+      padding: 0;
+    }
+
+    .home-logo {
+      position: absolute;
+      right: 16px;
+      top: 8px;
+      width: 55px;
+      height: 49px;
+      object-fit: contain;
+    }
+
+    .home-title {
+      font-family: PoetsenOne, Roboto, sans-serif;
+      font-size: 24px;
+      font-weight: 400;
+      color: var(--red);
+      text-shadow: 0 4px 4px rgba(0,0,0,0.25);
+      -webkit-text-stroke: 1px #000;
+    }
+
+    .home-search-bar {
+      width: 401px;
+      height: 39px;
+      border-radius: 9px;
+      border: 2px solid var(--gold);
+      background: var(--white);
+      box-shadow: 0 4px 4px rgba(0,0,0,0.2);
+      position: absolute;
+      left: 16px;
+      top: 63px;
+      display: flex;
+      align-items: center;
+      padding: 0 12px;
+      gap: 10px;
+    }
+    .home-search-bar input {
+      flex: 1;
+      border: none;
+      outline: none;
+      font-family: Roboto, sans-serif;
+      font-size: 14px;
+      font-weight: 600;
+      color: #A8A8A8;
+      background: transparent;
+    }
+    .home-search-bar input::placeholder { color: #A8A8A8; }
+
+    .home-fab {
+      width: 86px;
+      height: 77px;
+      border-radius: 190px;
+      background: var(--gold);
+      position: absolute;
+      right: 16px;
+      top: 119px;
+      cursor: pointer;
+      border: none;
+    }
+
+    .home-bottom-nav {
+      width: 100%;
+      height: 51px;
+      background: var(--white);
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-around;
+      padding: 0 10px;
+      border-top: 1px solid #f0f0f0;
+    }
+    .nav-icon-btn {
+      background: none;
+      border: none;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 6px;
+    }
+
+    /* ===================== */
+    /*   RESPONSIVE          */
+    /* ===================== */
+    @media (max-width: 430px) {
+      .app-shell {
+        width: 100vw;
+        height: 100dvh;
+        min-height: 100vh;
+      }
+      .home-search-bar { width: calc(100% - 32px); }
+    }
+  </style>
+</head>
+<body>
+<div class="app-shell">
+
+  <!-- ======================== PAGE 1: LOGIN ======================== -->
+  <div id="page-login" class="page active">
+    <img class="page-bg" src="https://api.builder.io/api/v1/image/assets/TEMP/96d42ee776b81abe2282a5b01a6b075656305a94?width=860" alt="" />
+
+    <!-- Email field -->
+    <div class="login-email-field">
+      <input type="email" placeholder="Email ou número de telefone" autocomplete="email" />
+    </div>
+
+    <!-- Password field -->
+    <div class="login-password-field">
+      <input type="password" placeholder="Senha" autocomplete="current-password" />
+    </div>
+
+    <!-- ENTRAR button -->
+    <button class="login-enter-btn" onclick="showPage('page-home')">ENTRAR</button>
+
+    <!-- CADASTRAR button -->
+    <button class="login-register-btn" onclick="showPage('page-reg1')">CADASTRAR</button>
+
+    <!-- AJUDA -->
+    <span class="ajuda-link">AJUDA</span>
+  </div>
+
+  <!-- ======================== PAGE 2: REGISTER STEP 1 ======================== -->
+  <div id="page-reg1" class="page">
+    <img class="page-bg" src="https://api.builder.io/api/v1/image/assets/TEMP/2207cc5a954b943e3fe858aa749f287a40fb714f?width=860" alt="" />
+
+    <!-- Back -->
+    <button class="back-btn" onclick="showPage('page-login')" aria-label="Voltar">
+      <svg width="28" height="29" viewBox="0 0 28 29" fill="none"><path d="M9.129 15.7083L15.6623 22.475L13.9998 24.1667L4.6665 14.5L13.9998 4.83333L15.6623 6.525L9.129 13.2917H23.3332V15.7083H9.129Z" fill="#FCDA78"/></svg>
+    </button>
+
+    <!-- Title -->
+    <span class="page-title" style="top:53px">Crie sua conta</span>
+
+    <!-- Nome -->
+    <div class="field-group" style="left:27px;top:121px">
+      <label class="field-label">Nome</label>
+      <div class="field-input-wrap">
+        <input type="text" placeholder="Seu nome" autocomplete="name" />
+        <svg class="field-icon" width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M12 12C14.7614 12 17 9.76142 17 7C17 4.23858 14.7614 2 12 2C9.23858 2 7 4.23858 7 7C7 9.76142 9.23858 12 12 12ZM12 14C8.13401 14 5 17.134 5 21H19C19 17.134 15.866 14 12 14Z" fill="#EC8441"/></svg>
+      </div>
+    </div>
+
+    <!-- Telefone -->
+    <div class="field-group" style="left:27px;top:238px">
+      <label class="field-label">Telefone</label>
+      <div class="field-input-wrap">
+        <input type="tel" placeholder="(99) 99999-9999" autocomplete="tel" />
+        <svg class="field-icon" width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M6.62 10.79C8.06 13.62 10.38 15.93 13.21 17.38L15.41 15.18C15.68 14.91 16.08 14.82 16.43 14.94C17.55 15.31 18.76 15.51 20 15.51C20.55 15.51 21 15.96 21 16.51V20C21 20.55 20.55 21 20 21C10.61 21 3 13.39 3 4C3 3.45 3.45 3 4 3H7.5C8.05 3 8.5 3.45 8.5 4C8.5 5.25 8.7 6.45 9.07 7.57C9.18 7.92 9.1 8.31 8.82 8.59L6.62 10.79Z" fill="#EC8441"/></svg>
+      </div>
+    </div>
+
+    <!-- E-mail -->
+    <div class="field-group" style="left:27px;top:355px">
+      <label class="field-label">E-mail</label>
+      <div class="field-input-wrap">
+        <input type="email" placeholder="voce@email.com" autocomplete="email" />
+        <svg class="field-icon" width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M20 4H4C2.9 4 2.01 4.9 2.01 6L2 18C2 19.1 2.9 20 4 20H20C21.1 20 22 19.1 22 18V6C22 4.9 21.1 4 20 4ZM20 8L12 13L4 8V6L12 11L20 6V8Z" fill="#EC8441"/></svg>
+      </div>
+    </div>
+
+    <!-- Senha -->
+    <div class="field-group" style="left:27px;top:472px">
+      <label class="field-label">Senha <span style="color:var(--gold)">*</span></label>
+      <div class="field-input-wrap">
+        <input type="password" placeholder="Mín. 6 caracteres" autocomplete="new-password" />
+        <svg class="field-icon" width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M18 8H17V6C17 3.24 14.76 1 12 1C9.24 1 7 3.24 7 6V8H6C4.9 8 4 8.9 4 10V20C4 21.1 4.9 22 6 22H18C19.1 22 20 21.1 20 20V10C20 8.9 19.1 8 18 8ZM12 17C10.9 17 10 16.1 10 15C10 13.9 10.9 13 12 13C13.1 13 14 13.9 14 15C14 16.1 13.1 17 12 17ZM15.1 8H8.9V6C8.9 4.29 10.29 2.9 12 2.9C13.71 2.9 15.1 4.29 15.1 6V8Z" fill="#EC8441"/></svg>
+      </div>
+    </div>
+
+    <!-- Confirmar senha -->
+    <div class="field-group" style="left:27px;top:589px">
+      <label class="field-label">Confirmar senha</label>
+      <div class="field-input-wrap">
+        <input type="password" placeholder="Repita a senha" autocomplete="new-password" />
+        <svg class="field-icon" width="24" height="24" viewBox="0 0 24 24" fill="none"><path d="M12 4.5C7 4.5 2.73 7.61 1 12C2.73 16.39 7 19.5 12 19.5C17 19.5 21.27 16.39 23 12C21.27 7.61 17 4.5 12 4.5ZM12 17C9.24 17 7 14.76 7 12C7 9.24 9.24 7 12 7C14.76 7 17 9.24 17 12C17 14.76 14.76 17 12 17ZM12 9C10.34 9 9 10.34 9 12C9 13.66 10.34 15 12 15C13.66 15 15 13.66 15 12C15 13.34 13.66 9 12 9Z" fill="#EC8441"/></svg>
+      </div>
+    </div>
+
+    <!-- Next arrow -->
+    <img class="next-arrow-btn reg-next-img" src="https://api.builder.io/api/v1/image/assets/TEMP/040bcd501833c6fa15cc84ffa15aa8623c50c360?width=162" alt="Próximo" onclick="showPage('page-reg2')" style="cursor:pointer" />
+
+    <!-- AJUDA -->
+    <span class="ajuda-link" style="top:886px">AJUDA</span>
+  </div>
+
+  <!-- ======================== PAGE 3: REGISTER STEP 2 ======================== -->
+  <div id="page-reg2" class="page">
+    <img class="page-bg" src="https://api.builder.io/api/v1/image/assets/TEMP/2207cc5a954b943e3fe858aa749f287a40fb714f?width=860" alt="" />
+
+    <!-- Back -->
+    <button class="back-btn" onclick="showPage('page-reg1')" aria-label="Voltar">
+      <svg width="28" height="29" viewBox="0 0 28 29" fill="none"><path d="M9.129 15.7083L15.6623 22.475L13.9998 24.1667L4.6665 14.5L13.9998 4.83333L15.6623 6.525L9.129 13.2917H23.3332V15.7083H9.129Z" fill="#FCDA78"/></svg>
+    </button>
+
+    <!-- Title -->
+    <span class="page-title" style="top:53px">Crie sua conta</span>
+
+    <!-- CEP -->
+    <div class="field-group" style="left:27px;top:121px">
+      <label class="field-label">CEP</label>
+      <div class="field-input-wrap">
+        <input type="text" placeholder="CEP" maxlength="9" />
+      </div>
+    </div>
+
+    <!-- Bairro -->
+    <div class="field-group" style="left:27px;top:238px">
+      <label class="field-label">Bairro</label>
+      <div class="field-input-wrap">
+        <input type="text" placeholder="Bairro" />
+      </div>
+    </div>
+
+    <!-- Cidade -->
+    <div class="field-group" style="left:27px;top:355px">
+      <label class="field-label">Cidade</label>
+      <div class="field-input-wrap">
+        <input type="text" placeholder="Cidade" />
+      </div>
+    </div>
+
+    <!-- Rua -->
+    <div class="field-group" style="left:27px;top:472px">
+      <label class="field-label">Rua</label>
+      <div class="field-input-wrap">
+        <input type="text" placeholder="Rua" />
+      </div>
+    </div>
+
+    <!-- Número da casa -->
+    <div class="field-group" style="left:27px;top:589px">
+      <label class="field-label">Número da casa</label>
+      <div class="field-input-wrap">
+        <input type="text" placeholder="Número da Casa" />
+      </div>
+    </div>
+
+    <!-- Next arrow -->
+    <img class="next-arrow-btn reg-next-img" src="https://api.builder.io/api/v1/image/assets/TEMP/908b2b95bb7dfa4194061a50d2ce4cf6281d35d7?width=162" alt="Próximo" onclick="showPage('page-reg3')" style="cursor:pointer" />
+
+    <!-- AJUDA -->
+    <span class="ajuda-link" style="top:886px">AJUDA</span>
+  </div>
+
+  <!-- ======================== PAGE 4: REGISTER STEP 3 ======================== -->
+  <div id="page-reg3" class="page">
+    <img class="page-bg" src="https://api.builder.io/api/v1/image/assets/TEMP/2207cc5a954b943e3fe858aa749f287a40fb714f?width=860" alt="" />
+
+    <!-- Back -->
+    <button class="back-btn" onclick="showPage('page-reg2')" aria-label="Voltar">
+      <svg width="28" height="29" viewBox="0 0 28 29" fill="none"><path d="M9.129 15.7083L15.6623 22.475L13.9998 24.1667L4.6665 14.5L13.9998 4.83333L15.6623 6.525L9.129 13.2917H23.3332V15.7083H9.129Z" fill="#FCDA78"/></svg>
+    </button>
+
+    <!-- Title -->
+    <span class="page-title" style="top:53px">Crie sua conta</span>
+
+    <!-- Estado Cívil -->
+    <div class="field-group" style="left:27px;top:121px">
+      <label class="field-label">Estado Cívil</label>
+      <div class="field-input-wrap">
+        <select>
+          <option value="" disabled selected>SLIDE</option>
+          <option value="solteiro">Solteiro(a)</option>
+          <option value="casado">Casado(a)</option>
+          <option value="divorciado">Divorciado(a)</option>
+          <option value="viuvo">Viúvo(a)</option>
+        </select>
+        <svg class="field-icon" width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M5 8L10 13L15 8" stroke="#D8D8D8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </div>
+    </div>
+
+    <!-- Gênero -->
+    <div class="field-group" style="left:27px;top:238px">
+      <label class="field-label">Gênero</label>
+      <div class="field-input-wrap">
+        <select>
+          <option value="" disabled selected>SLIDE</option>
+          <option value="masculino">Masculino</option>
+          <option value="feminino">Feminino</option>
+          <option value="outro">Outro</option>
+        </select>
+        <svg class="field-icon" width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M5 8L10 13L15 8" stroke="#D8D8D8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </div>
+    </div>
+
+    <!-- Timbre Vocal -->
+    <div class="field-group" style="left:27px;top:355px">
+      <label class="field-label">Timbre Vocal <span style="color:var(--gold)">*</span></label>
+      <div class="field-input-wrap">
+        <select>
+          <option value="" disabled selected>TIMBRE</option>
+          <option value="soprano">Soprano</option>
+          <option value="mezzo">Mezzo-soprano</option>
+          <option value="contralto">Contralto</option>
+          <option value="tenor">Tenor</option>
+          <option value="baritono">Barítono</option>
+          <option value="baixo">Baixo</option>
+        </select>
+        <svg class="field-icon" width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M5 8L10 13L15 8" stroke="#D8D8D8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </div>
+    </div>
+
+    <!-- Avatar upload -->
+    <div class="avatar-upload-wrap">
+      <div class="avatar-upload-box" onclick="document.getElementById('avatar-input').click()">
+        <img id="avatar-preview" src="https://api.builder.io/api/v1/image/assets/TEMP/524f7bfb31f2da6b9318e02bdfccdc915c90fa32?width=178" alt="Avatar" />
+      </div>
+      <div class="avatar-edit-badge" onclick="document.getElementById('avatar-input').click()">
+        <img src="https://api.builder.io/api/v1/image/assets/TEMP/441db60720ca347d35caa8c51d71b4b2e6d4c720?width=46" alt="Editar" />
+      </div>
+      <input id="avatar-input" type="file" accept="image/*" style="display:none" onchange="previewAvatar(event)" />
+    </div>
+
+    <!-- FINALIZAR button -->
+    <button class="finalizar-btn" onclick="showPage('page-home')">FINALIZAR</button>
+
+    <!-- AJUDA -->
+    <span class="ajuda-link" style="top:886px">AJUDA</span>
+  </div>
+
+  <!-- ======================== PAGE 5: HOME ======================== -->
+  <div id="page-home" class="page">
+
+    <!-- Header -->
+    <div class="home-header">
+      <button class="home-back-btn" onclick="showPage('page-login')" aria-label="Voltar">
+        <svg width="22" height="19" viewBox="0 0 22 19" fill="none"><path d="M0 9.21429L9.21429 -4.76837e-07M0 9.21429L9.21429 18.4286M0 9.21429L21.5 9.21429" stroke="#FCDA78" stroke-width="3.07143" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <span class="home-title">AJUDA</span>
+      <img class="home-logo" src="https://api.builder.io/api/v1/image/assets/TEMP/1845113a9aafff2f9cf0e7ed0f4c1eb6dedeaf32?width=110" alt="Logo" />
+    </div>
+
+    <!-- Search bar -->
+    <div class="home-search-bar">
+      <svg width="22" height="19" viewBox="0 0 30 29" fill="none"><path fill-rule="evenodd" clip-rule="evenodd" d="M13.876 0C6.21277 0 0 6.00389 0 13.4107C0 20.8173 6.21277 26.8212 13.876 26.8212C17.3015 26.8212 20.4372 25.6216 22.8576 23.6332L28.0794 28.6814C28.5186 29.1061 29.231 29.1063 29.6704 28.6815C30.1098 28.2568 30.1099 27.5681 29.6705 27.1434L24.4493 22.0957C26.5091 19.7558 27.752 16.7236 27.752 13.4107C27.752 6.00389 21.5393 0 13.876 0ZM2.25017 13.4107C2.25017 7.20569 7.45498 2.17517 13.876 2.17517C20.2971 2.17517 25.5019 7.20569 25.5019 13.4107C25.5019 19.6156 20.2971 24.646 13.876 24.646C7.45498 24.646 2.25017 19.6156 2.25017 13.4107Z" fill="rgba(252,218,120,0.69)"/></svg>
+      <input type="search" placeholder="Buscar" />
+    </div>
+
+    <!-- FAB -->
+    <button class="home-fab" aria-label="Ação principal"></button>
+
+    <!-- Bottom navigation -->
+    <div class="home-bottom-nav">
+      <!-- Calendar icon -->
+      <button class="nav-icon-btn" aria-label="Agenda">
+        <svg width="29" height="27" viewBox="0 0 29 27" fill="none"><path d="M14.5 16.2C14.7868 16.2 15.0671 16.1208 15.3056 15.9725C15.544 15.8241 15.7299 15.6133 15.8396 15.3666C15.9494 15.1199 15.9781 14.8485 15.9221 14.5866C15.8662 14.3248 15.7281 14.0842 15.5253 13.8954C15.3225 13.7066 15.0642 13.578 14.7829 13.5259C14.5016 13.4739 14.2101 13.5006 13.9451 13.6028C13.6802 13.7049 13.4537 13.878 13.2944 14.1C13.135 14.322 13.05 14.583 13.05 14.85C13.05 15.208 13.2028 15.5514 13.4747 15.8046C13.7466 16.0578 14.1154 16.2 14.5 16.2ZM21.75 16.2C22.0368 16.2 22.3171 16.1208 22.5556 15.9725C22.794 15.8241 22.9799 15.6133 23.0896 15.3666C23.1994 15.1199 23.2281 14.8485 23.1721 14.5866C23.1162 14.3248 22.9781 14.0842 22.7753 13.8954C22.5725 13.7066 22.3142 13.578 22.0329 13.5259C21.7516 13.4739 21.4601 13.5006 21.1951 13.6028C20.9302 13.7049 20.7037 13.878 20.5444 14.1C20.385 14.322 20.3 14.583 20.3 14.85C20.3 15.208 20.4528 15.5514 20.7247 15.8046C20.9966 16.0578 21.3654 16.2 21.75 16.2ZM14.5 21.6C14.7868 21.6 15.0671 21.5208 15.3056 21.3725C15.544 21.2241 15.7299 21.0133 15.8396 20.7666C15.9494 20.5199 15.9781 20.2485 15.9221 19.9866C15.8662 19.7248 15.7281 19.4842 15.5253 19.2954C15.3225 19.1066 15.0642 18.978 14.7829 18.9259C14.5016 18.8738 14.2101 18.9006 13.9451 19.0028C13.6802 19.1049 13.4537 19.278 13.2944 19.5C13.135 19.722 13.05 19.983 13.05 20.25C13.05 20.608 13.2028 20.9514 13.4747 21.2046C13.7466 21.4578 14.1154 21.6 14.5 21.6ZM21.75 21.6C22.0368 21.6 22.3171 21.5208 22.5556 21.3725C22.794 21.2241 22.9799 21.0133 23.0896 20.7666C23.1994 20.5199 23.2281 20.2485 23.1721 19.9866C23.1162 19.7248 22.9781 19.4842 22.7753 19.2954C22.5725 19.1066 22.3142 18.978 22.0329 18.9259C21.7516 18.8738 21.4601 18.9006 21.1951 19.0028C20.9302 19.1049 20.7037 19.278 20.5444 19.5C20.385 19.722 20.3 19.983 20.3 20.25C20.3 20.608 20.4528 20.9514 20.7247 21.2046C20.9966 21.4578 21.3654 21.6 21.75 21.6ZM7.25 16.2C7.53678 16.2 7.81713 16.1208 8.05558 15.9725C8.29403 15.8241 8.47988 15.6133 8.58963 15.3666C8.69937 15.1199 8.72809 14.8485 8.67214 14.5866C8.61619 14.3248 8.47809 14.0842 8.2753 13.8954C8.07252 13.7066 7.81415 13.578 7.53288 13.5259C7.25161 13.4739 6.96006 13.5006 6.69511 13.6028C6.43016 13.7049 6.2037 13.878 6.04437 14.1C5.88504 14.322 5.8 14.583 5.8 14.85C5.8 15.208 5.95277 15.5514 6.2247 15.8046C6.49662 16.0578 6.86544 16.2 7.25 16.2ZM24.65 2.7H23.2V1.35C23.2 0.991958 23.0472 0.64858 22.7753 0.395406C22.5034 0.142232 22.1346 0 21.75 0C21.3654 0 20.9966 0.142232 20.7247 0.395406C20.4528 0.64858 20.3 0.991958 20.3 1.35V2.7H8.7V1.35C8.7 0.991958 8.54723 0.64858 8.2753 0.395406C8.00338 0.142232 7.63456 0 7.25 0C6.86544 0 6.49662 0.142232 6.2247 0.395406C5.95277 0.64858 5.8 0.991958 5.8 1.35V2.7H4.35C3.19631 2.7 2.08987 3.1267 1.27409 3.88622C0.458302 4.64574 0 5.67587 0 6.75V22.95C0 24.0241 0.458302 25.0543 1.27409 25.8138C2.08987 26.5733 3.19631 27 4.35 27H24.65C25.8037 27 26.9101 26.5733 27.7259 25.8138C28.5417 25.0543 29 24.0241 29 22.95V6.75C29 5.67587 28.5417 4.64574 27.7259 3.88622C26.9101 3.1267 25.8037 2.7 24.65 2.7ZM26.1 22.95C26.1 23.308 25.9472 23.6514 25.6753 23.9046C25.4034 24.1578 25.0346 24.3 24.65 24.3H4.35C3.96544 24.3 3.59662 24.1578 3.3247 23.9046C3.05277 23.6514 2.9 23.308 2.9 22.95V10.8H26.1V22.95ZM26.1 8.1H2.9V6.75C2.9 6.39196 3.05277 6.04858 3.3247 5.79541C3.59662 5.54223 3.96544 5.4 4.35 5.4H24.65C25.0346 5.4 25.4034 5.54223 25.6753 5.79541C25.9472 6.04858 26.1 6.39196 26.1 6.75V8.1ZM7.25 21.6C7.53678 21.6 7.81713 21.5208 8.05558 21.3725C8.29403 21.2241 8.47988 21.0133 8.58963 20.7666C8.69937 20.5199 8.72809 20.2485 8.67214 19.9866C8.61619 19.7248 8.47809 19.4842 8.2753 19.2954C8.07252 19.1066 7.81415 18.978 7.53288 18.9259C7.25161 18.8738 6.96006 18.9006 6.69511 19.0028C6.43016 19.1049 6.2037 19.278 6.04437 19.5C5.88504 19.722 5.8 19.983 5.8 20.25C5.8 20.608 5.95277 20.9514 6.2247 21.2046C6.49662 21.4578 6.86544 21.6 7.25 21.6Z" fill="#D8A353"/></svg>
+      </button>
+
+      <!-- Plus icon -->
+      <button class="nav-icon-btn" aria-label="Adicionar">
+        <svg width="27" height="27" viewBox="0 0 27 27" fill="none"><path d="M25.3125 11.8125H15.1875V1.6875C15.1875 1.23995 15.0097 0.810725 14.6932 0.494258C14.3768 0.17779 13.9476 0 13.5 0C13.0524 0 12.6232 0.17779 12.3068 0.494258C11.9903 0.810725 11.8125 1.23995 11.8125 1.6875V11.8125H1.6875C1.23995 11.8125 0.810725 11.9903 0.494258 12.3068C0.17779 12.6232 0 13.0524 0 13.5C0 13.9476 0.17779 14.3768 0.494258 14.6932C0.810725 15.0097 1.23995 15.1875 1.6875 15.1875H11.8125V25.3125C11.8125 25.7601 11.9903 26.1893 12.3068 26.5057C12.6232 26.8222 13.0524 27 13.5 27C13.9476 27 14.3768 26.8222 14.6932 26.5057C15.0097 26.1893 15.1875 25.7601 15.1875 25.3125V15.1875H25.3125C25.7601 15.1875 26.1893 15.0097 26.5057 14.6932C26.8222 14.3768 27 13.9476 27 13.5C27 13.0524 26.8222 12.6232 26.5057 12.3068C26.1893 11.9903 25.7601 11.8125 25.3125 11.8125Z" fill="#D8A353"/></svg>
+      </button>
+
+      <!-- Music note icon -->
+      <button class="nav-icon-btn" aria-label="Músicas">
+        <img src="https://api.builder.io/api/v1/image/assets/TEMP/c7ea47b404e60750c17266666f66adf8e52c6659?width=44" alt="Músicas" style="width:22px;height:35px;object-fit:contain" />
+      </button>
+
+      <!-- People icon -->
+      <button class="nav-icon-btn" aria-label="Membros">
+        <svg width="35" height="27" viewBox="0 0 35 27" fill="none"><path d="M31.2455 18.6907C32.1224 17.6912 32.6083 16.4087 32.6136 15.0796C32.6136 13.6043 32.027 12.1893 30.9828 11.1461C29.9385 10.1029 28.5222 9.51677 27.0455 9.51677C25.5687 9.51677 24.1524 10.1029 23.1082 11.1461C22.0639 12.1893 21.4773 13.6043 21.4773 15.0796C21.4826 16.4087 21.9685 17.6912 22.8455 18.6907C21.6999 19.4001 20.7541 20.3893 20.0973 21.565C19.4404 22.7407 19.094 24.0642 19.0909 25.4106C19.0909 25.8321 19.2585 26.2364 19.5569 26.5345C19.8552 26.8325 20.2599 27 20.6818 27C21.1038 27 21.5084 26.8325 21.8068 26.5345C22.1051 26.2364 22.2727 25.8321 22.2727 25.4106C22.2727 24.146 22.7756 22.9332 23.6706 22.039C24.5657 21.1448 25.7796 20.6425 27.0455 20.6425C28.3113 20.6425 29.5252 21.1448 30.4203 22.039C31.3153 22.9332 31.8182 24.146 31.8182 25.4106C31.8182 25.8321 31.9858 26.2364 32.2841 26.5345C32.5825 26.8325 32.9872 27 33.4091 27C33.831 27 34.2357 26.8325 34.534 26.5345C34.8324 26.2364 35 25.8321 35 25.4106C34.9969 24.0642 34.6505 22.7407 33.9937 21.565C33.3368 20.3893 32.391 19.4001 31.2455 18.6907ZM27.0455 17.4637C26.5735 17.4637 26.1121 17.3239 25.7197 17.0619C25.3272 16.7999 25.0214 16.4276 24.8407 15.992C24.6601 15.5563 24.6129 15.077 24.7049 14.6145C24.797 14.152 25.0243 13.7272 25.358 13.3938C25.6918 13.0604 26.117 12.8333 26.5799 12.7414C27.0428 12.6494 27.5226 12.6966 27.9587 12.877C28.3947 13.0575 28.7674 13.363 29.0296 13.7551C29.2919 14.1472 29.4318 14.6081 29.4318 15.0796C29.431 15.7117 29.1793 16.3176 28.7319 16.7645C28.2846 17.2114 27.6781 17.4629 27.0455 17.4637ZM12.1545 18.6907C13.0315 17.6912 13.5174 16.4087 13.5227 15.0796C13.5227 13.6043 12.9361 12.1893 11.8918 11.1461C10.8476 10.1029 9.43132 9.51677 7.95455 9.51677C6.47777 9.51677 5.06148 10.1029 4.01725 11.1461C2.97301 12.1893 2.38636 13.6043 2.38636 15.0796C2.39171 16.4087 2.8776 17.6912 3.75455 18.6907C2.60902 19.4001 1.66323 20.3893 1.00634 21.565C0.349455 22.7407 0.00312226 24.0642 0 25.4106C0 25.8321 0.167613 26.2364 0.465966 26.5345C0.76432 26.8325 1.16897 27 1.59091 27C2.01284 27 2.4175 26.8325 2.71585 26.5345C3.01421 26.2364 3.18182 25.8321 3.18182 25.4106C3.18182 24.146 3.68466 22.9332 4.57972 22.039C5.47478 21.1448 6.68874 20.6425 7.95455 20.6425C9.22035 20.6425 10.4343 21.1448 11.3294 22.039C12.2244 22.9332 12.7273 24.146 12.7273 25.4106C12.7273 25.8321 12.8949 26.2364 13.1932 26.5345C13.4916 26.8325 13.8962 27 14.3182 27C14.7401 27 15.1448 26.8325 15.4431 26.5345C15.7415 26.2364 15.9091 25.8321 15.9091 25.4106C15.906 24.0642 15.5596 22.7407 14.9027 21.565C14.2459 20.3893 13.3001 19.4001 12.1545 18.6907ZM7.95455 17.4637C7.48257 17.4637 7.02119 17.3239 6.62875 17.0619C6.23632 16.7999 5.93045 16.4276 5.74983 15.992C5.56921 15.5563 5.52196 15.077 5.61404 14.6145C5.70611 14.152 5.93339 13.7272 6.26713 13.3938C6.60087 13.0604 7.02608 12.8333 7.48899 12.7414C7.9519 12.6494 8.43172 12.6966 8.86777 12.877C9.30382 13.0575 9.67652 13.363 9.93873 13.7551C10.201 14.1472 10.3409 14.6081 10.3409 15.0796C10.3401 15.7117 10.0884 16.3176 9.64103 16.7645C9.19368 17.2114 8.58719 17.4629 7.95455 17.4637Z" fill="#D8A353"/></svg>
+      </button>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  function showPage(pageId) {
+    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+    document.getElementById(pageId).classList.add('active');
+  }
+
+  function previewAvatar(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = e => {
+      document.getElementById('avatar-preview').src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  }
+</script>
+</body>
+</html>
