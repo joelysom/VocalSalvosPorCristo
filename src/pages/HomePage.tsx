@@ -6,6 +6,7 @@ import {
   FiClipboard,
   FiCopy,
   FiEye,
+  FiExternalLink,
   FiFileText,
   FiHelpCircle,
   FiHeart,
@@ -60,7 +61,7 @@ type HomePageProps = {
 };
 
 type HomeTab = "home" | "agenda" | "songs" | "members";
-type ComposerMode = "home" | "agenda";
+type ComposerMode = "home" | "agenda" | "song";
 
 type CommentEntry = HomeCommentRecord;
 
@@ -92,6 +93,21 @@ type AgendaEvent = {
   author: string;
   comments: CommentEntry[];
   createdAtValue: number;
+  updatedAtValue: number;
+};
+
+type SongLibraryItem = {
+  id: string;
+  title: string;
+  artist: string;
+  tone: string;
+  category: string;
+  sourceUrl: string;
+  sourceLabel: string;
+  notes: string;
+  addedBy: string;
+  createdAtValue: number;
+  updatedAtValue: number;
 };
 
 type AgendaCalendarDay = {
@@ -102,10 +118,21 @@ type AgendaCalendarDay = {
   events: AgendaEvent[];
 };
 
+type AgendaNotificationItem = {
+  id: string;
+  eventId: string;
+  scheduledDate: string;
+  title: string;
+  detail: string;
+  changeType: "new" | "updated";
+  createdAtValue: number;
+};
+
 const initialPosts: FeedPost[] = [];
 const initialAgendaEvents: AgendaEvent[] = [];
-const repertoireHighlights: Array<{ id: string; title: string; tone: string; note: string }> = [];
+const initialSongLibrary: SongLibraryItem[] = [];
 const agendaWeekdayLabels = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
+const songLibraryStorageKey = "vocal-song-library";
 
 type MemberRoleVisual = {
   label: string;
@@ -274,6 +301,10 @@ function formatDateTimeLabel(value: unknown) {
   }).format(new Date(timestamp));
 }
 
+function buildAgendaSeenStorageKey(userUid: string) {
+  return `vocal-agenda-seen-at:${userUid}`;
+}
+
 function isPostExpired(createdAt: unknown, expirationDays: number) {
   if (!expirationDays) {
     return false;
@@ -297,6 +328,87 @@ function buildWhatsappLink(phone: string) {
 
   const normalized = digits.startsWith("55") ? digits : `55${digits}`;
   return `https://wa.me/${normalized}`;
+}
+
+function normalizeExternalUrl(value: string) {
+  const trimmedValue = value.trim();
+
+  if (!trimmedValue) {
+    return "";
+  }
+
+  if (/^https?:\/\//i.test(trimmedValue)) {
+    return trimmedValue;
+  }
+
+  return `https://${trimmedValue}`;
+}
+
+function buildSongFallbackUrl(title: string, artist: string) {
+  const query = encodeURIComponent([title, artist].filter(Boolean).join(" "));
+  return `https://www.cifraclub.com.br/?q=${query}`;
+}
+
+function inferSongSourceLabel(sourceUrl: string, usedFallback = false) {
+  if (usedFallback || sourceUrl.includes("cifraclub.com.br")) {
+    return "CifraClub";
+  }
+
+  return "Link externo";
+}
+
+function sortSongLibrary(library: SongLibraryItem[]) {
+  return [...library].sort((left, right) => left.title.localeCompare(right.title, "pt-BR", { sensitivity: "base" }));
+}
+
+function readSongLibraryFromStorage() {
+  if (typeof window === "undefined") {
+    return initialSongLibrary;
+  }
+
+  try {
+    const storedValue = window.localStorage.getItem(songLibraryStorageKey);
+
+    if (!storedValue) {
+      return initialSongLibrary;
+    }
+
+    const parsedValue = JSON.parse(storedValue);
+
+    if (!Array.isArray(parsedValue)) {
+      return initialSongLibrary;
+    }
+
+    return sortSongLibrary(
+      parsedValue.filter(Boolean).map((item) => ({
+        id: String(item.id || createId("song")),
+        title: String(item.title || "").trim(),
+        artist: String(item.artist || "").trim(),
+        tone: String(item.tone || "").trim(),
+        category: String(item.category || "Culto").trim(),
+        sourceUrl: String(item.sourceUrl || "").trim(),
+        sourceLabel: String(item.sourceLabel || "Link externo").trim(),
+        notes: String(item.notes || "").trim(),
+        addedBy: String(item.addedBy || "Equipe do vocal").trim(),
+        createdAtValue: Number(item.createdAtValue) || Date.now(),
+        updatedAtValue: Number(item.updatedAtValue) || Number(item.createdAtValue) || Date.now(),
+      })).filter((item) => item.title),
+    );
+  } catch {
+    return initialSongLibrary;
+  }
+}
+
+function saveSongLibraryToStorage(library: SongLibraryItem[]) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(songLibraryStorageKey, JSON.stringify(library));
+  } catch {
+    // Ignore storage failures and keep the in-memory library.
+  }
 }
 
 function resolveRoleLabel(role: string, accountLevel: AccessLevel, gender: string) {
@@ -435,6 +547,7 @@ function mapAgendaEventRecord(event: AgendaEventRecord): AgendaEvent {
     resolveTimestampMillis(event.createdAt) ||
     new Date(`${event.scheduledDate || "1970-01-01"}T${event.time || "12:00"}:00`).getTime() ||
     0;
+  const updatedAtValue = resolveTimestampMillis(event.updatedAt) || createdAtValue;
 
   return {
     id: event.id,
@@ -448,6 +561,7 @@ function mapAgendaEventRecord(event: AgendaEventRecord): AgendaEvent {
     author: event.author,
     comments: Array.isArray(event.comments) ? event.comments : [],
     createdAtValue,
+    updatedAtValue,
   };
 }
 
@@ -581,6 +695,9 @@ export function HomePage({
   const [activePostId, setActivePostId] = useState("");
   const [activeAgendaDate, setActiveAgendaDate] = useState("");
   const [agendaMonthKey, setAgendaMonthKey] = useState(() => formatMonthKey(new Date()));
+  const [songs, setSongs] = useState<SongLibraryItem[]>(() => readSongLibraryFromStorage());
+  const [songStatus, setSongStatus] = useState("");
+  const [activeSongId, setActiveSongId] = useState("");
   const [composerDraft, setComposerDraft] = useState({
     category: "Aviso",
     title: "",
@@ -591,6 +708,10 @@ export function HomePage({
     imageUrl: "",
     expirationDays: "0",
     kind: "Ensaio",
+    artist: "",
+    tone: "",
+    sourceUrl: "",
+    songCategory: "Culto",
   });
   const [profile, setProfile] = useState<MemberProfile | null>(null);
   const [profileDraft, setProfileDraft] = useState<OwnMemberProfileUpdate>(() =>
@@ -615,6 +736,7 @@ export function HomePage({
   const [directoryRefreshing, setDirectoryRefreshing] = useState(false);
   const [directoryStatus, setDirectoryStatus] = useState("");
   const [selectedDirectoryUid, setSelectedDirectoryUid] = useState("");
+  const [agendaSeenAt, setAgendaSeenAt] = useState(0);
   const mainPanelRef = useRef<HTMLDivElement | null>(null);
 
   const deferredQuery = useDeferredValue(query.trim().toLowerCase());
@@ -637,6 +759,8 @@ export function HomePage({
     resolvedLeadershipRole === "Vice-Secretário" ||
     effectivePermissions.includes("Postar avisos");
   const canManageAgenda = canPost || effectivePermissions.includes("Mexer na agenda");
+  const canManageSongs =
+    resolvedAccessLevel === "administration" || effectivePermissions.includes("Adicionar músicas");
   const canComment =
     canPost ||
     effectivePermissions.includes("Comentar") ||
@@ -780,6 +904,16 @@ export function HomePage({
     return agendaEventsByDate.get(activeAgendaDate) || [];
   }, [activeAgendaDate, agendaEventsByDate]);
 
+  const unreadAgendaItems = useMemo(
+    () => agendaEvents.filter((event) => event.updatedAtValue > agendaSeenAt).sort((left, right) => right.updatedAtValue - left.updatedAtValue),
+    [agendaEvents, agendaSeenAt],
+  );
+
+  const unreadAgendaCount = useMemo(() => {
+    const currentMonthKey = formatMonthKey(new Date());
+    return unreadAgendaItems.filter((event) => event.scheduledDate.slice(0, 7) === currentMonthKey).length;
+  }, [unreadAgendaItems]);
+
   const filteredDirectoryMembers = useMemo(() => {
     const source = directoryMembers.filter((member) =>
       !deferredQuery ||
@@ -791,6 +925,19 @@ export function HomePage({
 
     return sortDirectoryMembers(source);
   }, [deferredQuery, directoryMembers]);
+
+  const filteredSongs = useMemo(() => {
+    if (!deferredQuery) {
+      return songs;
+    }
+
+    return songs.filter((song) =>
+      [song.title, song.artist, song.tone, song.category, song.sourceLabel, song.notes, song.addedBy]
+        .join(" ")
+        .toLowerCase()
+        .includes(deferredQuery),
+    );
+  }, [deferredQuery, songs]);
 
   useEffect(() => {
     if (!filteredDirectoryMembers.length) {
@@ -806,26 +953,36 @@ export function HomePage({
   const selectedDirectoryMember =
     filteredDirectoryMembers.find((member) => member.uid === selectedDirectoryUid) || null;
   const activePost = posts.find((post) => post.id === activePostId) || null;
+  const activeSong = songs.find((song) => song.id === activeSongId) || null;
   const nextEvent = filteredAgendaEvents[0] ?? agendaEvents[0];
   const profileAvatar = profileAvatarPreview || currentUser?.photoURL || profile?.avatarDataUrl || "";
-  const notificationItems = useMemo(
+  const notificationItems = useMemo<AgendaNotificationItem[]>(
     () =>
-      [
-        ...posts.map((post) => ({
-          id: `post-${post.id}`,
-          message: `${post.category}: ${post.title} • ${post.dateLabel}`,
-          createdAtValue: post.createdAtValue,
-        })),
-        ...agendaEvents.map((event) => ({
-          id: `agenda-${event.id}`,
-          message: `${event.kind}: ${event.title} em ${event.dateLabel} às ${event.time}.`,
-          createdAtValue: event.createdAtValue,
-        })),
-      ]
-        .sort((left, right) => right.createdAtValue - left.createdAtValue)
-        .slice(0, 4),
-    [agendaEvents, posts],
+      unreadAgendaItems.map((event) => ({
+        id: `agenda-${event.id}`,
+        eventId: event.id,
+        scheduledDate: event.scheduledDate,
+        title: event.title,
+        detail: `${event.dateLabel}${event.time ? ` às ${event.time}` : ""}${event.location ? ` • ${event.location}` : ""}`,
+        changeType: event.createdAtValue === event.updatedAtValue ? "new" : "updated",
+        createdAtValue: event.updatedAtValue,
+      })),
+    [unreadAgendaItems],
   );
+
+  useEffect(() => {
+    if (!currentUid) {
+      setAgendaSeenAt(0);
+      return;
+    }
+
+    try {
+      const storedValue = window.localStorage.getItem(buildAgendaSeenStorageKey(currentUid));
+      setAgendaSeenAt(storedValue ? Number(storedValue) || 0 : 0);
+    } catch {
+      setAgendaSeenAt(0);
+    }
+  }, [currentUid]);
 
   useEffect(() => {
     setQuery("");
@@ -839,15 +996,63 @@ export function HomePage({
   }, [activePostId, posts]);
 
   useEffect(() => {
+    if (activeSongId && !songs.some((song) => song.id === activeSongId)) {
+      setActiveSongId("");
+    }
+  }, [activeSongId, songs]);
+
+  useEffect(() => {
     if (activeAgendaDate && !agendaEventsByDate.has(activeAgendaDate)) {
       setActiveAgendaDate("");
     }
   }, [activeAgendaDate, agendaEventsByDate]);
 
+  const markAgendaNotificationsAsSeen = () => {
+    const latestAgendaTimestamp = agendaEvents.reduce(
+      (highestValue, event) => Math.max(highestValue, event.updatedAtValue),
+      0,
+    );
+
+    if (!latestAgendaTimestamp) {
+      return;
+    }
+
+    setAgendaSeenAt(latestAgendaTimestamp);
+
+    if (!currentUid) {
+      return;
+    }
+
+    try {
+      window.localStorage.setItem(buildAgendaSeenStorageKey(currentUid), String(latestAgendaTimestamp));
+    } catch {
+      // Ignore localStorage failures and keep the in-memory marker.
+    }
+  };
+
+  const openAgendaNotifications = () => {
+    setShowNotificationsModal(true);
+  };
+
+  const closeAgendaNotifications = () => {
+    setShowNotificationsModal(false);
+    markAgendaNotificationsAsSeen();
+  };
+
+  const openAgendaNotificationItem = (item: AgendaNotificationItem) => {
+    setShowNotificationsModal(false);
+    markAgendaNotificationsAsSeen();
+    setActivePostId("");
+    setActiveTab("agenda");
+    setAgendaMonthKey(item.scheduledDate.slice(0, 7));
+    setActiveAgendaDate(item.scheduledDate);
+  };
+
   const openTab = (tab: HomeTab) => {
     setActiveTab(tab);
     setActivePostId("");
     setActiveAgendaDate("");
+    setActiveSongId("");
   };
 
   const closeAgendaDetail = () => {
@@ -869,8 +1074,20 @@ export function HomePage({
     setActivePostId("");
   };
 
+  const openSongDetail = (songId: string) => {
+    setActivePostId("");
+    setActiveAgendaDate("");
+    setActiveSongId(songId);
+  };
+
+  const closeSongDetail = () => {
+    setActiveSongId("");
+  };
+
   const openComposer = () => {
-    if (activeTab === "agenda" && canManageAgenda) {
+    if (activeTab === "songs" && canManageSongs) {
+      setComposerMode("song");
+    } else if (activeTab === "agenda" && canManageAgenda) {
       setComposerMode("agenda");
     } else if (canPost) {
       setComposerMode("home");
@@ -890,6 +1107,10 @@ export function HomePage({
       imageUrl: "",
       expirationDays: "0",
       kind: activeTab === "agenda" ? "Ensaio" : "Aviso",
+      artist: "",
+      tone: "",
+      sourceUrl: "",
+      songCategory: "Culto",
     });
     setComposerImageEditorSource("");
     setShowComposerImageEditor(false);
@@ -903,7 +1124,43 @@ export function HomePage({
   };
 
   const publishComposerEntry = async () => {
-    if (!composerDraft.title.trim() || !composerDraft.content.trim()) {
+    if (composerMode !== "song" && (!composerDraft.title.trim() || !composerDraft.content.trim())) {
+      return;
+    }
+
+    if (composerMode === "song") {
+      const normalizedTitle = composerDraft.title.trim();
+
+      if (!normalizedTitle) {
+        setSongStatus("Informe o nome da música para adicionar ao repertório.");
+        return;
+      }
+
+      const normalizedArtist = composerDraft.artist.trim();
+      const manualSourceUrl = normalizeExternalUrl(composerDraft.sourceUrl);
+      const sourceUrl = manualSourceUrl || buildSongFallbackUrl(normalizedTitle, normalizedArtist);
+      const usedFallback = !manualSourceUrl;
+      const now = Date.now();
+      const nextSong: SongLibraryItem = {
+        id: createId("song"),
+        title: normalizedTitle,
+        artist: normalizedArtist,
+        tone: composerDraft.tone.trim(),
+        category: composerDraft.songCategory || "Culto",
+        sourceUrl,
+        sourceLabel: inferSongSourceLabel(sourceUrl, usedFallback),
+        notes: composerDraft.content.trim(),
+        addedBy: resolvedName,
+        createdAtValue: now,
+        updatedAtValue: now,
+      };
+
+      const nextSongs = sortSongLibrary([nextSong, ...songs]);
+      setSongs(nextSongs);
+      saveSongLibraryToStorage(nextSongs);
+      setSongStatus("Música adicionada à biblioteca do vocal.");
+      setActiveTab("songs");
+      closeComposer();
       return;
     }
 
@@ -1282,9 +1539,15 @@ export function HomePage({
       <div className="home-modern-shell">
         <header className="home-modern-header">
           <div className="home-header-bar">
-            <div className="home-brand-mark">
+            <button
+              type="button"
+              className="home-brand-mark home-brand-trigger"
+              aria-label="Abrir alterações da agenda"
+              onClick={openAgendaNotifications}
+            >
               <img src={logoAd} alt="Logo do vocal" />
-            </div>
+              {unreadAgendaCount > 0 ? <span className="home-logo-badge">{unreadAgendaCount > 9 ? "9+" : unreadAgendaCount}</span> : null}
+            </button>
 
             <div className="home-identity-copy">
               <h1>Bem-vindo, {firstName}</h1>
@@ -1306,7 +1569,7 @@ export function HomePage({
 
         {activeTab !== "members" ? (
           <>
-            {activeTab !== "home" && activeTab !== "agenda" ? (
+            {activeTab !== "home" && activeTab !== "agenda" && activeTab !== "songs" ? (
               <section className="home-hero-card">
                 <div>
                   <p className="home-hero-kicker">Painel do vocal</p>
@@ -1321,7 +1584,7 @@ export function HomePage({
               </section>
             ) : null}
 
-            {activeTab !== "home" && activeTab !== "agenda" ? (
+            {activeTab === "songs" ? (
               <section className="home-toolbar">
                 <label className="home-search-shell" aria-label="Buscar na tela atual">
                   <FiSearch size={18} />
@@ -1335,7 +1598,31 @@ export function HomePage({
               </section>
             ) : null}
 
-            {activeTab !== "home" && activeTab !== "agenda" ? (
+            {activeTab === "songs" ? (
+              <section className="home-summary-strip home-summary-strip-single">
+                <article className="home-summary-card modern">
+                  <span>Próximo compromisso</span>
+                  <strong>{nextEvent?.title || "Sem evento próximo"}</strong>
+                  <p>{nextEvent ? `${nextEvent.dateLabel} • ${nextEvent.time} • ${nextEvent.location}` : "Ainda não existe ensaio, culto ou saída cadastrada."}</p>
+                </article>
+              </section>
+            ) : null}
+
+            {activeTab !== "home" && activeTab !== "agenda" && activeTab !== "songs" ? (
+              <section className="home-toolbar">
+                <label className="home-search-shell" aria-label="Buscar na tela atual">
+                  <FiSearch size={18} />
+                  <input
+                    type="search"
+                    value={query}
+                    onChange={(event) => setQuery(event.target.value)}
+                    placeholder={resolveSearchPlaceholder(activeTab)}
+                  />
+                </label>
+              </section>
+            ) : null}
+
+            {activeTab !== "home" && activeTab !== "agenda" && activeTab !== "songs" ? (
               <section className="home-summary-strip">
                 <article className="home-summary-card modern">
                   <span>Próximo compromisso</span>
@@ -1653,24 +1940,58 @@ export function HomePage({
           ) : null}
 
           {activeTab === "songs" ? (
-            <section className="home-song-grid">
-              {repertoireHighlights.map((song) => (
-                <article key={song.id} className="home-song-card">
-                  <div className="home-card-topline">
-                    <span>Repertório</span>
-                    <strong>Tonalidade {song.tone}</strong>
-                  </div>
-                  <h3>{song.title}</h3>
-                  <p>{song.note}</p>
-                </article>
-              ))}
+            <section className="home-song-library">
+              {songStatus ? <p className="home-inline-status">{songStatus}</p> : null}
 
-              {repertoireHighlights.length === 0 ? (
-                <article className="home-empty-card">
-                  <h3>Repertório vazio</h3>
-                  <p>As músicas ainda não foram lançadas aqui.</p>
-                </article>
-              ) : null}
+              <article className="home-song-drive-card">
+                <div className="home-song-drive-header">
+                  <div>
+                    <p className="home-card-eyebrow">Biblioteca do vocal</p>
+                    <h3>Músicas e cifras</h3>
+                    <p>Abra letras, cifras e referências como se estivesse em uma pasta organizada do repertório, com acesso rápido para ensaio, culto e ministrações especiais.</p>
+                  </div>
+
+                  <div className="home-song-drive-stats">
+                    <span className="home-feed-count-pill">{filteredSongs.length} arquivo(s)</span>
+                    <span className="home-feed-count-pill">{songs.filter((song) => song.category === "Ensaio").length} ensaio</span>
+                  </div>
+                </div>
+
+                {filteredSongs.length > 0 ? (
+                  <div className="home-song-list" role="list">
+                    {filteredSongs.map((song) => (
+                      <button key={song.id} type="button" className="home-song-row" onClick={() => openSongDetail(song.id)}>
+                        <div className="home-song-row-icon">
+                          <GiMusicalScore size={22} />
+                        </div>
+
+                        <div className="home-song-row-main">
+                          <strong>{song.title}</strong>
+                          <p>{song.artist || "Artista não informado"}</p>
+                          <div className="home-song-row-meta">
+                            <span>{song.category}</span>
+                            <span>{song.tone ? `Tom ${song.tone}` : "Tom livre"}</span>
+                            <span>{song.sourceLabel}</span>
+                          </div>
+                        </div>
+
+                        <div className="home-song-row-actions" onClick={(event) => event.stopPropagation()}>
+                          <a className="home-secondary-action compact" href={song.sourceUrl} target="_blank" rel="noreferrer">
+                            <FiExternalLink size={15} />
+                            Abrir letra
+                          </a>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="home-song-library-empty">
+                    <GiMusicalNotes size={34} />
+                    <strong>Biblioteca pronta para receber músicas</strong>
+                    <p>Use o botão + para cadastrar links de cifra, letra ou referência externa e deixar o repertório acessível para todo o vocal neste aparelho.</p>
+                  </div>
+                )}
+              </article>
             </section>
           ) : null}
 
@@ -1748,15 +2069,15 @@ export function HomePage({
           ) : null}
         </main>
 
-        {canPost || canManageAgenda ? (
-          !activePost && !activeAgendaDate ? (
-          <button className="home-fab-action" type="button" aria-label={activeTab === "agenda" ? "Criar evento" : "Criar publicação"} onClick={openComposer}>
+        {(activeTab === "songs" ? canManageSongs : activeTab === "agenda" ? canManageAgenda : canPost) ? (
+          !activePost && !activeAgendaDate && !activeSong ? (
+          <button className="home-fab-action" type="button" aria-label={activeTab === "agenda" ? "Criar evento" : activeTab === "songs" ? "Adicionar música" : "Criar publicação"} onClick={openComposer}>
             <FiPlus size={24} />
           </button>
           ) : null
         ) : null}
 
-        {!activePost && !activeAgendaDate ? <nav className="home-bottom-nav" aria-label="Navegação principal">
+        {!activePost && !activeAgendaDate && !activeSong ? <nav className="home-bottom-nav" aria-label="Navegação principal">
           <button className={`nav-icon-btn${activeTab === "home" ? " is-active" : ""}`} type="button" aria-label="Home" onClick={() => openTab("home")}>
             <FiHome size={22} />
             <span>Home</span>
@@ -1959,7 +2280,7 @@ export function HomePage({
             <div className="home-modal-header">
               <div>
                 <p className="home-card-eyebrow">Criação rápida</p>
-                <h3>{composerMode === "agenda" ? "Novo evento da agenda" : "Nova publicação do mural"}</h3>
+                <h3>{composerMode === "agenda" ? "Novo evento da agenda" : composerMode === "song" ? "Nova música do repertório" : "Nova publicação do mural"}</h3>
               </div>
               <button type="button" className="home-modal-close" onClick={closeComposer}>
                 Fechar
@@ -2010,6 +2331,22 @@ export function HomePage({
                 ) : null}
                 {composerImageStatus ? <p className="home-inline-status">{composerImageStatus}</p> : null}
               </div>
+            ) : composerMode === "song" ? (
+              <div className="home-modal-form">
+                <div className="home-pill-row">
+                  {(["Culto", "Ensaio", "Especial"] as const).map((option) => (
+                    <button key={option} type="button" className={`home-pill-btn${composerDraft.songCategory === option ? " is-active" : ""}`} onClick={() => setComposerDraft((current) => ({ ...current, songCategory: option }))}>
+                      {option}
+                    </button>
+                  ))}
+                </div>
+                <input name="title" value={composerDraft.title} onChange={handleComposerFieldChange} placeholder="Nome da música" />
+                <input name="artist" value={composerDraft.artist} onChange={handleComposerFieldChange} placeholder="Artista ou ministério" />
+                <input name="tone" value={composerDraft.tone} onChange={handleComposerFieldChange} placeholder="Tom principal ou referência" />
+                <input name="sourceUrl" value={composerDraft.sourceUrl} onChange={handleComposerFieldChange} placeholder="Link da cifra, letra ou referência externa (opcional)" />
+                <textarea name="content" value={composerDraft.content} onChange={handleComposerFieldChange} placeholder="Observações do maestro, estrutura, intro, modulação ou notas para a equipe" rows={5} />
+                <p className="home-inline-status">Se você não informar um link, o app abre uma busca automática no CifraClub com o nome da música.</p>
+              </div>
             ) : (
               <div className="home-modal-form">
                 <div className="home-pill-row">
@@ -2032,8 +2369,47 @@ export function HomePage({
                 Cancelar
               </button>
               <button type="button" className="home-primary-action" onClick={() => void publishComposerEntry()} disabled={composerSubmitting}>
-                {composerSubmitting ? "Salvando..." : "Publicar"}
+                {composerSubmitting ? "Salvando..." : composerMode === "song" ? "Adicionar música" : "Publicar"}
               </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {activeSong ? (
+        <div className="home-modal-backdrop" role="presentation" onClick={closeSongDetail}>
+          <div className="home-modal-card home-song-detail-modal" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
+            <div className="home-modal-header">
+              <div>
+                <p className="home-card-eyebrow">Biblioteca do vocal</p>
+                <h3>{activeSong.title}</h3>
+              </div>
+              <button type="button" className="home-modal-close" onClick={closeSongDetail}>
+                Fechar
+              </button>
+            </div>
+
+            <div className="home-song-detail-copy">
+              <div className="home-song-detail-meta">
+                <span>{activeSong.category}</span>
+                <span>{activeSong.artist || "Artista não informado"}</span>
+                <span>{activeSong.tone ? `Tom ${activeSong.tone}` : "Tom livre"}</span>
+                <span>{activeSong.sourceLabel}</span>
+              </div>
+
+              <p>{activeSong.notes || "Sem observações extras. Use o link abaixo para abrir a cifra ou a letra da música."}</p>
+
+              <div className="home-song-detail-actions">
+                <a className="home-primary-action" href={activeSong.sourceUrl} target="_blank" rel="noreferrer">
+                  <FiExternalLink size={16} />
+                  Abrir cifra / letra
+                </a>
+                <button type="button" className="home-secondary-action" onClick={closeSongDetail}>
+                  Voltar à biblioteca
+                </button>
+              </div>
+
+              <p className="home-song-detail-footnote">Adicionada por {activeSong.addedBy}.</p>
             </div>
           </div>
         </div>
@@ -2250,27 +2626,38 @@ export function HomePage({
       ) : null}
 
       {showNotificationsModal ? (
-        <div className="home-modal-backdrop" role="presentation" onClick={() => setShowNotificationsModal(false)}>
+        <div className="home-modal-backdrop" role="presentation" onClick={closeAgendaNotifications}>
           <div className="home-modal-card compact" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
             <div className="home-modal-header">
               <div>
-                <p className="home-card-eyebrow">Notificações</p>
-                <h3>Central de avisos</h3>
+                <p className="home-card-eyebrow">Agenda</p>
+                <h3>Alterações da agenda</h3>
               </div>
-              <button type="button" className="home-modal-close" onClick={() => setShowNotificationsModal(false)}>
+              <button type="button" className="home-modal-close" onClick={closeAgendaNotifications}>
                 Fechar
               </button>
             </div>
 
             <div className="home-help-list">
               {notificationItems.length > 0 ? (
-                notificationItems.map((item) => (
-                  <p key={item.id}>{item.message}</p>
-                ))
+                <div className="home-notification-list">
+                  {notificationItems.map((item) => (
+                    <button key={item.id} type="button" className="home-notification-item" onClick={() => openAgendaNotificationItem(item)}>
+                      <div className="home-notification-item-top">
+                        <span className={`home-notification-kind is-${item.changeType}`}>
+                          {item.changeType === "new" ? "Novo compromisso" : "Agenda atualizada"}
+                        </span>
+                        <small>{formatDateTimeLabel(item.createdAtValue)}</small>
+                      </div>
+                      <strong>{item.title}</strong>
+                      <p>{item.detail}</p>
+                    </button>
+                  ))}
+                </div>
               ) : (
                 <>
-                  <p>Aqui vão aparecer novos avisos, publicações e alterações importantes da agenda.</p>
-                  <p>No momento, não há notificações novas para mostrar.</p>
+                  <p>Aqui aparecem compromissos novos ou alterações recentes que você ainda não tinha visto na agenda.</p>
+                  <p>No momento, não há mudanças novas para mostrar.</p>
                 </>
               )}
             </div>
