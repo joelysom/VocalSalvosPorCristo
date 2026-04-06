@@ -1837,6 +1837,43 @@ select {
   gap: 3px;
 }
 
+.home-directory-role {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.home-directory-role.is-admin {
+  background: rgba(148, 163, 184, 0.22);
+  color: #64748b;
+}
+
+.home-directory-role.is-developer {
+  background: rgba(59, 130, 246, 0.14);
+  color: #2563eb;
+}
+
+.home-directory-role.is-maestro {
+  background: rgba(245, 158, 11, 0.18);
+  color: #b45309;
+}
+
+.home-directory-role.is-secretary,
+.home-directory-role.is-vice-secretary {
+  background: rgba(16, 185, 129, 0.14);
+  color: #047857;
+}
+
+.home-directory-role.is-member {
+  background: rgba(148, 163, 184, 0.12);
+  color: #475569;
+}
+
 .home-directory-copy strong {
   color: #1f2437;
   font-size: 14px;
@@ -1861,6 +1898,24 @@ select {
   grid-template-columns: auto 1fr;
   gap: 14px;
   align-items: center;
+}
+
+.home-member-detail-backdrop {
+  background: rgba(3, 7, 18, 0.72);
+  backdrop-filter: blur(8px);
+}
+
+.home-member-detail-modal {
+  max-width: 560px;
+  width: min(92vw, 560px);
+}
+
+.home-member-detail-header {
+  align-items: center;
+}
+
+.home-member-detail-header p {
+  margin: 0 0 10px;
 }
 
 .home-directory-contact-row {

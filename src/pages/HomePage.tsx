@@ -3,7 +3,9 @@ import type * as React from "react";
 import {
   FiBell,
   FiCamera,
+  FiClipboard,
   FiCopy,
+  FiFileText,
   FiHelpCircle,
   FiHome,
   FiPhone,
@@ -11,8 +13,8 @@ import {
   FiSearch,
   FiUsers,
 } from "react-icons/fi";
-import { FaWhatsapp } from "react-icons/fa6";
-import { GiMusicalScore } from "react-icons/gi";
+import { FaCrown, FaReact, FaWhatsapp } from "react-icons/fa6";
+import { GiMusicalNotes, GiMusicalScore } from "react-icons/gi";
 import { HiOutlineArrowRightOnRectangle } from "react-icons/hi2";
 import { LuCalendarDays } from "react-icons/lu";
 import { AvatarEditorModal } from "../components/AvatarEditorModal";
@@ -82,6 +84,13 @@ const initialPosts: FeedPost[] = [];
 const initialAgendaEvents: AgendaEvent[] = [];
 const repertoireHighlights: Array<{ id: string; title: string; tone: string; note: string }> = [];
 
+type MemberRoleVisual = {
+  label: string;
+  priority: number;
+  icon: React.ElementType;
+  accentClassName: string;
+};
+
 function createId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -131,6 +140,10 @@ function buildWhatsappLink(phone: string) {
 function resolveRoleLabel(role: string, accountLevel: AccessLevel, gender: string) {
   const isFeminine = gender === "Feminino";
 
+  if (role === "Desenvolvedor") {
+    return "Desenvolvedor";
+  }
+
   if (role === "Secretário") {
     return isFeminine ? "Secretária" : "Secretário";
   }
@@ -144,18 +157,81 @@ function resolveRoleLabel(role: string, accountLevel: AccessLevel, gender: strin
   }
 
   if (accountLevel === "administration") {
-    return isFeminine ? "Administradora" : "Administrador";
+    return isFeminine ? "Administradora do Vocal" : "Administrador do Vocal";
   }
 
   return role || "Integrante";
 }
 
 function resolveDirectoryRoleLabel(member: MemberDirectoryProfile) {
+  return resolveMemberRoleVisual(member).label;
+}
+
+function resolveMemberRoleVisual(member: MemberDirectoryProfile): MemberRoleVisual {
   if (member.accountLevel === "administration") {
-    return "Administração";
+    if (member.leadershipRole === "Desenvolvedor") {
+      return {
+        label: "Desenvolvedor",
+        priority: 1,
+        icon: FaReact,
+        accentClassName: "is-developer",
+      };
+    }
+
+    return {
+      label: "Administrador do Vocal",
+      priority: 0,
+      icon: FaCrown,
+      accentClassName: "is-admin",
+    };
   }
 
-  return "Membro do vocal";
+  if (member.leadershipRole === "Maestro") {
+    return {
+      label: "Maestro",
+      priority: 2,
+      icon: GiMusicalNotes,
+      accentClassName: "is-maestro",
+    };
+  }
+
+  if (member.leadershipRole === "Secretário") {
+    return {
+      label: "Secretário",
+      priority: 3,
+      icon: FiClipboard,
+      accentClassName: "is-secretary",
+    };
+  }
+
+  if (member.leadershipRole === "Vice-Secretário") {
+    return {
+      label: "Vice-Secretário",
+      priority: 4,
+      icon: FiFileText,
+      accentClassName: "is-vice-secretary",
+    };
+  }
+
+  return {
+    label: "Membro do vocal",
+    priority: 5,
+    icon: FiUsers,
+    accentClassName: "is-member",
+  };
+}
+
+function sortDirectoryMembers(members: MemberDirectoryProfile[]) {
+  return [...members].sort((left, right) => {
+    const leftRole = resolveMemberRoleVisual(left);
+    const rightRole = resolveMemberRoleVisual(right);
+
+    if (leftRole.priority !== rightRole.priority) {
+      return leftRole.priority - rightRole.priority;
+    }
+
+    return left.name.localeCompare(right.name, "pt-BR", { sensitivity: "base" });
+  });
 }
 
 function resolveSearchPlaceholder(tab: HomeTab) {
@@ -272,6 +348,7 @@ export function HomePage({
   const [showHelpModal, setShowHelpModal] = useState(false);
   const [showNotificationsModal, setShowNotificationsModal] = useState(false);
   const [showProfileModal, setShowProfileModal] = useState(false);
+  const [showMemberDetailModal, setShowMemberDetailModal] = useState(false);
   const [composerDraft, setComposerDraft] = useState({
     category: "Aviso",
     title: "",
@@ -366,7 +443,7 @@ export function HomePage({
         }
 
         if (directoryResult.status === "fulfilled") {
-          setDirectoryMembers(directoryResult.value.members);
+          setDirectoryMembers(sortDirectoryMembers(directoryResult.value.members));
           setDirectoryStatus(directoryResult.value.statusMessage);
         } else {
           setDirectoryStatus("Não foi possível carregar a lista de membros agora.");
@@ -419,16 +496,15 @@ export function HomePage({
   }, [agendaEvents, deferredQuery]);
 
   const filteredDirectoryMembers = useMemo(() => {
-    if (!deferredQuery) {
-      return directoryMembers;
-    }
-
-    return directoryMembers.filter((member) =>
-      [member.name, member.vocalRange, member.leadershipRole, member.accountLevel, member.phone]
+    const source = directoryMembers.filter((member) =>
+      !deferredQuery ||
+      [member.name, resolveDirectoryRoleLabel(member), member.vocalRange, member.leadershipRole, member.accountLevel, member.phone]
         .join(" ")
         .toLowerCase()
         .includes(deferredQuery),
     );
+
+    return sortDirectoryMembers(source);
   }, [deferredQuery, directoryMembers]);
 
   useEffect(() => {
@@ -613,7 +689,7 @@ export function HomePage({
 
     try {
       const directoryResult = await fetchDirectoryContent(currentUid, profile);
-      setDirectoryMembers(directoryResult.members);
+      setDirectoryMembers(sortDirectoryMembers(directoryResult.members));
       setDirectoryStatus(directoryResult.statusMessage || "Diretório atualizado.");
     } catch {
       setDirectoryStatus("Não foi possível atualizar a lista de membros agora.");
@@ -673,7 +749,7 @@ export function HomePage({
       setProfileAvatarDataUrl(null);
       setProfileAvatarEditorSource("");
       setShowProfileAvatarEditor(false);
-      setDirectoryMembers(directoryResult.members);
+      setDirectoryMembers(sortDirectoryMembers(directoryResult.members));
       setDirectoryStatus(directoryResult.statusMessage);
       setProfileStatus("Perfil atualizado com sucesso.");
     } catch (error) {
@@ -977,7 +1053,10 @@ export function HomePage({
                         key={member.uid}
                         type="button"
                         className={`home-directory-item${selectedDirectoryUid === member.uid ? " is-active" : ""}`}
-                        onClick={() => setSelectedDirectoryUid(member.uid)}
+                        onClick={() => {
+                          setSelectedDirectoryUid(member.uid);
+                          setShowMemberDetailModal(true);
+                        }}
                       >
                         <div className="home-directory-avatar">
                           {member.avatarDataUrl ? <img src={member.avatarDataUrl} alt={member.name} /> : <span>{getInitials(member.name)}</span>}
@@ -985,67 +1064,18 @@ export function HomePage({
 
                         <div className="home-directory-copy">
                           <strong>{member.name}</strong>
-                          <span>{resolveDirectoryRoleLabel(member)}</span>
+                          <span className={`home-directory-role ${resolveMemberRoleVisual(member).accentClassName}`}>
+                            {(() => {
+                              const RoleIcon = resolveMemberRoleVisual(member).icon;
+                              return <RoleIcon size={14} />;
+                            })()}
+                            {resolveDirectoryRoleLabel(member)}
+                          </span>
                           {member.uid === currentUid ? <small>Seu perfil</small> : null}
                           {member.vocalRange ? <small>Timbre {member.vocalRange}</small> : null}
                         </div>
                       </button>
                     ))}
-                  </div>
-
-                  <div className="home-directory-detail">
-                    {selectedDirectoryMember ? (
-                      <>
-                        <div className="home-directory-detail-header">
-                          <div className="home-directory-avatar large">
-                            {selectedDirectoryMember.avatarDataUrl ? <img src={selectedDirectoryMember.avatarDataUrl} alt={selectedDirectoryMember.name} /> : <span>{getInitials(selectedDirectoryMember.name)}</span>}
-                          </div>
-
-                          <div>
-                            <h4>{selectedDirectoryMember.name}</h4>
-                            <p>{resolveDirectoryRoleLabel(selectedDirectoryMember)}</p>
-                            <div className="home-chip-row">
-                              {selectedDirectoryMember.vocalRange ? <span className="home-chip">Timbre {selectedDirectoryMember.vocalRange}</span> : null}
-                              <span className="home-chip">Contato interno</span>
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="home-directory-contact-row">
-                          <div className="home-directory-contact-card">
-                            <FiPhone size={16} />
-                            <span>{selectedDirectoryMember.phone || "Telefone não informado"}</span>
-                          </div>
-
-                          <div className="home-directory-contact-actions">
-                            <a
-                              className={`home-whatsapp-btn${selectedDirectoryMember.phoneNormalized ? "" : " is-disabled"}`}
-                              href={selectedDirectoryMember.phoneNormalized ? buildWhatsappLink(selectedDirectoryMember.phoneNormalized) : undefined}
-                              target="_blank"
-                              rel="noreferrer"
-                              aria-disabled={!selectedDirectoryMember.phoneNormalized}
-                              onClick={(event) => {
-                                if (!selectedDirectoryMember.phoneNormalized) {
-                                  event.preventDefault();
-                                }
-                              }}
-                            >
-                              <FaWhatsapp size={18} />
-                              WhatsApp
-                            </a>
-
-                            <button type="button" className="home-secondary-action compact" onClick={() => copyPhoneNumber(selectedDirectoryMember.phone)}>
-                              <FiCopy size={15} />
-                              Copiar número
-                            </button>
-                          </div>
-                        </div>
-
-                        <p className="home-directory-safety-note">Endereço completo e outros dados privados não aparecem aqui por segurança. Este espaço existe só para facilitar contato rápido e organização do ministério.</p>
-                      </>
-                    ) : (
-                      <p className="home-directory-empty">Selecione um membro para ver o contato disponível.</p>
-                    )}
                   </div>
                 </div>
               </article>
@@ -1294,6 +1324,74 @@ export function HomePage({
                 </div>
               </article>
             </section>
+          </div>
+        </div>
+      ) : null}
+
+      {showMemberDetailModal && selectedDirectoryMember ? (
+        <div className="home-modal-backdrop home-member-detail-backdrop" role="presentation" onClick={() => setShowMemberDetailModal(false)}>
+          <div className="home-modal-card compact home-member-detail-modal" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
+            <div className="home-modal-header">
+              <div>
+                <p className="home-card-eyebrow">Contato interno</p>
+                <h3>{selectedDirectoryMember.name}</h3>
+              </div>
+              <button type="button" className="home-modal-close" onClick={() => setShowMemberDetailModal(false)}>
+                Fechar
+              </button>
+            </div>
+
+            <div className="home-directory-detail-header home-member-detail-header">
+              <div className="home-directory-avatar large">
+                {selectedDirectoryMember.avatarDataUrl ? <img src={selectedDirectoryMember.avatarDataUrl} alt={selectedDirectoryMember.name} /> : <span>{getInitials(selectedDirectoryMember.name)}</span>}
+              </div>
+
+              <div>
+                <p className={`home-directory-role ${resolveMemberRoleVisual(selectedDirectoryMember).accentClassName}`}>
+                  {(() => {
+                    const RoleIcon = resolveMemberRoleVisual(selectedDirectoryMember).icon;
+                    return <RoleIcon size={15} />;
+                  })()}
+                  Contato interno • {resolveDirectoryRoleLabel(selectedDirectoryMember)}
+                </p>
+                <div className="home-chip-row">
+                  {selectedDirectoryMember.vocalRange ? <span className="home-chip">Timbre {selectedDirectoryMember.vocalRange}</span> : null}
+                  {selectedDirectoryMember.uid === currentUid ? <span className="home-chip">Seu perfil</span> : null}
+                </div>
+              </div>
+            </div>
+
+            <div className="home-directory-contact-row">
+              <div className="home-directory-contact-card">
+                <FiPhone size={16} />
+                <span>{selectedDirectoryMember.phone || "Telefone não informado"}</span>
+              </div>
+
+              <div className="home-directory-contact-actions">
+                <a
+                  className={`home-whatsapp-btn${selectedDirectoryMember.phoneNormalized ? "" : " is-disabled"}`}
+                  href={selectedDirectoryMember.phoneNormalized ? buildWhatsappLink(selectedDirectoryMember.phoneNormalized) : undefined}
+                  target="_blank"
+                  rel="noreferrer"
+                  aria-disabled={!selectedDirectoryMember.phoneNormalized}
+                  onClick={(event) => {
+                    if (!selectedDirectoryMember.phoneNormalized) {
+                      event.preventDefault();
+                    }
+                  }}
+                >
+                  <FaWhatsapp size={18} />
+                  WhatsApp
+                </a>
+
+                <button type="button" className="home-secondary-action compact" onClick={() => copyPhoneNumber(selectedDirectoryMember.phone)}>
+                  <FiCopy size={15} />
+                  Copiar número
+                </button>
+              </div>
+            </div>
+
+            <p className="home-directory-safety-note">Endereço completo e outros dados privados não aparecem aqui por segurança. Este espaço existe só para facilitar contato rápido e organização do ministério.</p>
           </div>
         </div>
       ) : null}

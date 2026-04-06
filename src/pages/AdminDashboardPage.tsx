@@ -1,6 +1,7 @@
 import { KeyRound, Save, ShieldCheck, ShieldPlus, Users } from "lucide-react";
 import { useMemo, useState } from "react";
 import {
+  ADMINISTRATION_ROLES,
   ALL_PERMISSIONS,
   DIRECTION_ROLES,
   GENERAL_PERMISSIONS,
@@ -244,7 +245,11 @@ export function AdminDashboardPage({
 
           <div className="admin-member-list">
             {filteredMembers.map((member) => {
-              const allowedRoleOptions = member.accountLevel === "direction" ? ["", ...DIRECTION_ROLES] : [""];
+              const allowedRoleOptions = member.accountLevel === "direction"
+                ? ["", ...DIRECTION_ROLES]
+                : member.accountLevel === "administration"
+                  ? ["", ...ADMINISTRATION_ROLES]
+                  : [""];
               const permissionPool = member.accountLevel === "member"
                 ? MEMBER_PERMISSIONS
                 : Array.from(new Set([...GENERAL_PERMISSIONS, ...ALL_PERMISSIONS]));
@@ -351,7 +356,6 @@ export function AdminDashboardPage({
                             type="button"
                             className={`admin-role-chip${(member.leadershipRole || "") === option ? " is-active" : ""}`}
                             aria-pressed={(member.leadershipRole || "") === option}
-                            disabled={member.accountLevel !== "direction" && option !== ""}
                             onClick={() =>
                               updateMemberField(member.uid, {
                                 leadershipRole: option,

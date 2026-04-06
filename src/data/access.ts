@@ -6,6 +6,7 @@ export const ADMIN_BOOTSTRAP_ALIAS_PASSWORD = "admin";
 export const ADMIN_BOOTSTRAP_AUTH_PASSWORD = "admin123";
 
 export const DIRECTION_ROLES = ["Maestro", "Secretário", "Vice-Secretário"];
+export const ADMINISTRATION_ROLES = ["Desenvolvedor"];
 
 export const GENERAL_PERMISSIONS = [
   "Adicionar músicas",
