@@ -577,6 +577,44 @@ export default function PagesIndex() {
       loginPassword: "",
     }));
 
+    const sendFirebaseFallbackResetEmail = async () => {
+      try {
+        firebaseAuth.languageCode = "pt-BR";
+        await sendPasswordResetEmail(firebaseAuth, email);
+        setAuthStatusMessage(
+          canUseLocalPasswordResetFallback()
+            ? `Ambiente local detectado. Enviamos o e-mail padrão do Firebase para ${email}. O template customizado funciona no deploy com a API ativa.`
+            : `O envio customizado ficou indisponível no momento. Enviamos o e-mail padrão do Firebase para ${email}.`,
+        );
+        return true;
+      } catch (fallbackError) {
+        const code =
+          fallbackError instanceof Error && "code" in fallbackError
+            ? String(fallbackError.code)
+            : "";
+
+        if (code === "auth/user-not-found") {
+          setAuthStatusMessage(
+            "Se o e-mail estiver cadastrado, enviaremos um link de redefinição em instantes.",
+          );
+          return true;
+        }
+
+        if (code === "auth/invalid-email" || code === "auth/missing-email") {
+          setErrors((current) => ({
+            ...current,
+            loginEmail: resolveAuthErrorMessage(code),
+          }));
+          return true;
+        }
+
+        setAuthStatusMessage(
+          resolveAuthErrorMessage(code) || "Não foi possível enviar o e-mail de redefinição agora.",
+        );
+        return false;
+      }
+    };
+
     try {
       const response = await fetch("/api/auth/password-reset", {
         method: "POST",
@@ -596,6 +634,14 @@ export default function PagesIndex() {
             ...current,
             loginEmail: payload.message || "Não foi possível validar o e-mail informado.",
           }));
+        } else if (response.status >= 500) {
+          const fallbackWorked = await sendFirebaseFallbackResetEmail();
+
+          if (!fallbackWorked) {
+            setAuthStatusMessage(
+              payload?.message || "Não foi possível enviar o e-mail de redefinição agora.",
+            );
+          }
         } else {
           setAuthStatusMessage(
             payload?.message || "Não foi possível enviar o e-mail de redefinição agora.",
@@ -610,38 +656,15 @@ export default function PagesIndex() {
           "Se o e-mail estiver cadastrado, enviaremos um link de redefinição em instantes.",
       );
     } catch (error) {
-      if (canUseLocalPasswordResetFallback()) {
-        try {
-          firebaseAuth.languageCode = "pt-BR";
-          await sendPasswordResetEmail(firebaseAuth, email);
-          setAuthStatusMessage(
-            `Ambiente local detectado. Enviamos o e-mail padrão do Firebase para ${email}. O template customizado funciona no deploy com a API ativa.`,
-          );
-          return;
-        } catch (fallbackError) {
-          const code =
-            fallbackError instanceof Error && "code" in fallbackError
-              ? String(fallbackError.code)
-              : "";
+      const fallbackWorked = await sendFirebaseFallbackResetEmail();
 
-          if (
-            code === "auth/invalid-email" ||
-            code === "auth/user-not-found" ||
-            code === "auth/missing-email"
-          ) {
-            setErrors((current) => ({
-              ...current,
-              loginEmail: resolveAuthErrorMessage(code),
-            }));
-          } else {
-            setAuthStatusMessage(resolveAuthErrorMessage(code));
-          }
-
-          return;
-        }
+      if (!fallbackWorked) {
+        setAuthStatusMessage(
+          error instanceof Error && error.message
+            ? error.message
+            : "Não foi possível enviar o e-mail de redefinição agora.",
+        );
       }
-
-      setAuthStatusMessage("Não foi possível enviar o e-mail de redefinição agora.");
     } finally {
       setAuthSubmitting(false);
     }

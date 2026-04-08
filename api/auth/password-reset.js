@@ -57,15 +57,60 @@ function isValidEmail(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
-function getBaseUrl(req) {
-  if (process.env.APP_BASE_URL) {
-    return process.env.APP_BASE_URL.replace(/\/$/, "");
+function resolveConfiguredAppBaseUrl() {
+  const configuredUrl = String(process.env.APP_BASE_URL || "").trim();
+
+  if (!configuredUrl) {
+    return "";
   }
 
-  const forwardedProto = req.headers["x-forwarded-proto"] || "https";
-  const forwardedHost = req.headers["x-forwarded-host"] || req.headers.host;
+  try {
+    const parsedUrl = new URL(configuredUrl);
 
-  return `${forwardedProto}://${forwardedHost}`.replace(/\/$/, "");
+    if (!["https:", "http:"].includes(parsedUrl.protocol)) {
+      return "";
+    }
+
+    return parsedUrl.toString().replace(/\/$/, "");
+  } catch {
+    return "";
+  }
+}
+
+function buildResetActionCodeSettings() {
+  const baseUrl = resolveConfiguredAppBaseUrl();
+
+  if (!baseUrl) {
+    return null;
+  }
+
+  return {
+    url: baseUrl,
+    handleCodeInApp: false,
+  };
+}
+
+async function createPasswordResetLink(auth, email) {
+  const actionCodeSettings = buildResetActionCodeSettings();
+
+  if (!actionCodeSettings) {
+    return auth.generatePasswordResetLink(email);
+  }
+
+  try {
+    return await auth.generatePasswordResetLink(email, actionCodeSettings);
+  } catch (error) {
+    const code = error?.code || "";
+
+    if (
+      code === "auth/invalid-continue-uri" ||
+      code === "auth/unauthorized-continue-uri"
+    ) {
+      return auth.generatePasswordResetLink(email);
+    }
+
+    throw error;
+  }
 }
 
 function buildResetEmailHtml({ resetLink, recipientEmail }) {
@@ -162,14 +207,10 @@ export default async function handler(req, res) {
   try {
     getFirebaseAdminApp();
 
-    const baseUrl = getBaseUrl(req);
     const auth = admin.auth();
     const transporter = getTransporter();
     const logoBuffer = await readFile(logoPath);
-    const resetLink = await auth.generatePasswordResetLink(email, {
-      url: baseUrl,
-      handleCodeInApp: false,
-    });
+    const resetLink = await createPasswordResetLink(auth, email);
 
     const fromName = process.env.SMTP_FROM_NAME || "Vocal Salvos por Cristo";
     const fromEmail = getRequiredEnv("SMTP_FROM_EMAIL");

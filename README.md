@@ -61,7 +61,7 @@ Use [.env.example](.env.example) como referência e configure essas variáveis n
 - `VITE_GOOGLE_DRIVE_API_KEY`
 - `VITE_GOOGLE_DRIVE_CLIENT_ID`
 - `VITE_GOOGLE_DRIVE_APP_ID`
-- `APP_BASE_URL`
+- `APP_BASE_URL` (opcional)
 - `FIREBASE_ADMIN_PROJECT_ID`
 - `FIREBASE_ADMIN_CLIENT_EMAIL`
 - `FIREBASE_ADMIN_PRIVATE_KEY`
@@ -72,6 +72,14 @@ Use [.env.example](.env.example) como referência e configure essas variáveis n
 - `SMTP_FROM_NAME`
 - `SMTP_FROM_EMAIL`
 - `SMTP_REPLY_TO`
+
+### Observações importantes para o reset no deploy
+
+- O erro de `google-analytics.com` bloqueado por `ERR_BLOCKED_BY_CLIENT` ou Tracking Prevention não é a causa do reset falhar. Isso é apenas bloqueio de Analytics por navegador/extensão.
+- O erro real é a resposta `500` da rota `/api/auth/password-reset`.
+- `APP_BASE_URL` é opcional. Se você usar essa variável, o domínio configurado precisa estar autorizado em Firebase Authentication.
+- Se `APP_BASE_URL` estiver ausente, inválido ou não autorizado, a API agora volta para o link padrão do Firebase automaticamente.
+- Se o envio customizado por SMTP falhar, o front-end agora tenta enviar o e-mail padrão do Firebase como fallback para não travar a recuperação de senha.
 
 ### Google Drive Picker
 
