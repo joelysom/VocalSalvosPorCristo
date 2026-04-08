@@ -42,6 +42,20 @@ service cloud.firestore {
 				hasPermission('Postar avisos');
 		}
 
+		function canManageSongContent() {
+			return isAdmin() ||
+				isDirectionLeader() ||
+				hasPermission('Adicionar músicas');
+		}
+
+		function canDeleteManagedContent() {
+			return isAdmin() ||
+				(signedIn() && (
+					currentMember().data.leadershipRole == 'Maestro' ||
+					currentMember().data.leadershipRole == 'Secretário'
+				));
+		}
+
 		function canCommentOnInternalContent() {
 			return canManageAgendaContent() ||
 				hasPermission('Comentar') ||
@@ -411,6 +425,7 @@ service cloud.firestore {
 					'author',
 					'role',
 					'imageUrl',
+					'mediaItems',
 					'expirationDays',
 					'createdByUid',
 					'likedByUids',
@@ -418,6 +433,13 @@ service cloud.firestore {
 					'createdAt',
 					'updatedAt'
 				]);
+		}
+
+		function hasValidOptionalHomePostMediaItems() {
+			return !request.resource.data.keys().hasAny(['mediaItems']) || (
+				request.resource.data.mediaItems is list &&
+				request.resource.data.mediaItems.size() <= 8
+			);
 		}
 
 		function hasValidHomePostData(postId) {
@@ -444,6 +466,7 @@ service cloud.firestore {
 					request.resource.data.imageUrl.matches('data:image/.*') ||
 					request.resource.data.imageUrl.matches('https://.*')
 				) &&
+				hasValidOptionalHomePostMediaItems() &&
 				request.resource.data.expirationDays is int &&
 				request.resource.data.expirationDays in [0, 7, 21, 30] &&
 				request.resource.data.createdByUid is string &&
@@ -456,6 +479,17 @@ service cloud.firestore {
 				request.resource.data.updatedAt is timestamp;
 		}
 
+		function homePostMediaItemsUnchanged() {
+			return (
+				!request.resource.data.keys().hasAny(['mediaItems']) &&
+				!resource.data.keys().hasAny(['mediaItems'])
+			) || (
+				request.resource.data.keys().hasAny(['mediaItems']) &&
+				resource.data.keys().hasAny(['mediaItems']) &&
+				request.resource.data.mediaItems == resource.data.mediaItems
+			);
+		}
+
 		function homePostCoreFieldsUnchanged() {
 			return request.resource.data.id == resource.data.id &&
 				request.resource.data.category == resource.data.category &&
@@ -464,8 +498,83 @@ service cloud.firestore {
 				request.resource.data.author == resource.data.author &&
 				request.resource.data.role == resource.data.role &&
 				request.resource.data.imageUrl == resource.data.imageUrl &&
+				homePostMediaItemsUnchanged() &&
 				request.resource.data.expirationDays == resource.data.expirationDays &&
 				request.resource.data.createdByUid == resource.data.createdByUid;
+		}
+
+		function hasValidSongLibraryKeys() {
+			return request.resource.data.keys().hasAll([
+					'id',
+					'title',
+					'artist',
+					'tone',
+					'category',
+					'notes',
+					'addedBy',
+					'createdByUid',
+					'referenceUrl',
+					'voiceAssets',
+					'lyricFile',
+					'scoreFile',
+					'createdAt',
+					'updatedAt'
+				]) &&
+				request.resource.data.keys().hasOnly([
+					'id',
+					'title',
+					'artist',
+					'tone',
+					'category',
+					'notes',
+					'addedBy',
+					'createdByUid',
+					'referenceUrl',
+					'voiceAssets',
+					'lyricFile',
+					'scoreFile',
+					'createdAt',
+					'updatedAt'
+				]);
+		}
+
+		function hasValidSongLibraryData(songId) {
+			return hasValidSongLibraryKeys() &&
+				request.resource.data.id == songId &&
+				request.resource.data.title is string &&
+				request.resource.data.title.size() >= 2 &&
+				request.resource.data.title.size() <= 160 &&
+				request.resource.data.artist is string &&
+				request.resource.data.artist.size() <= 120 &&
+				request.resource.data.tone is string &&
+				request.resource.data.tone.size() <= 40 &&
+				request.resource.data.category is string &&
+				request.resource.data.category.size() >= 2 &&
+				request.resource.data.category.size() <= 60 &&
+				request.resource.data.notes is string &&
+				request.resource.data.notes.size() <= 3000 &&
+				request.resource.data.addedBy is string &&
+				request.resource.data.addedBy.size() <= 80 &&
+				request.resource.data.createdByUid is string &&
+				request.resource.data.createdByUid.size() <= 128 &&
+				request.resource.data.referenceUrl is string &&
+				request.resource.data.referenceUrl.size() <= 400 &&
+				(
+					request.resource.data.referenceUrl.size() == 0 ||
+					request.resource.data.referenceUrl.matches('https://.*')
+				) &&
+				request.resource.data.voiceAssets is list &&
+				request.resource.data.voiceAssets.size() <= 7 &&
+				(
+					request.resource.data.lyricFile == null ||
+					request.resource.data.lyricFile is map
+				) &&
+				(
+					request.resource.data.scoreFile == null ||
+					request.resource.data.scoreFile is map
+				) &&
+				request.resource.data.createdAt is timestamp &&
+				request.resource.data.updatedAt is timestamp;
 		}
 
 		match /members/{userId} {
@@ -516,12 +625,12 @@ service cloud.firestore {
 					request.resource.data.createdAt == resource.data.createdAt &&
 					agendaCoreFieldsUnchanged()
 				);
-			allow delete: if canManageAgendaContent();
+			allow delete: if canDeleteManagedContent();
 		}
 
 		match /homePosts/{postId} {
 			allow get, list: if signedIn();
-			allow create: if signedIn() &&
+			allow create: if canManageAgendaContent() &&
 				request.auth.uid == request.resource.data.createdByUid &&
 				hasValidHomePostData(postId);
 			allow update: if (
@@ -534,7 +643,18 @@ service cloud.firestore {
 					request.resource.data.createdAt == resource.data.createdAt &&
 					homePostCoreFieldsUnchanged()
 				);
-			allow delete: if canManageAgendaContent();
+			allow delete: if canDeleteManagedContent();
+		}
+
+		match /songLibrary/{songId} {
+			allow get, list: if signedIn();
+			allow create: if canManageSongContent() &&
+				request.auth.uid == request.resource.data.createdByUid &&
+				hasValidSongLibraryData(songId);
+			allow update: if canManageSongContent() &&
+				hasValidSongLibraryData(songId) &&
+				request.resource.data.createdAt == resource.data.createdAt;
+			allow delete: if canDeleteManagedContent();
 		}
 
 		match /{document=**} {

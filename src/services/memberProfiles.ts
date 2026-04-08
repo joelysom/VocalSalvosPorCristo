@@ -25,6 +25,7 @@ import {
   normalizePermissions,
 } from "../data/access";
 import type { FormState } from "../data/mock";
+import { uploadProfileAvatar } from "./storageMedia";
 
 export type MemberProfile = {
   uid: string;
@@ -230,7 +231,7 @@ async function compressAvatarDataUrl(fileDataUrl: string) {
   return dataUrl;
 }
 
-async function resolveAvatarDataUrl(avatarSource: AvatarSource) {
+async function resolveAvatarDataUrl(userId: string, avatarSource: AvatarSource) {
   if (!avatarSource) {
     return "";
   }
@@ -244,10 +245,12 @@ async function resolveAvatarDataUrl(avatarSource: AvatarSource) {
       return avatarSource;
     }
 
-    return compressAvatarDataUrl(avatarSource);
+    const compressedAvatar = await compressAvatarDataUrl(avatarSource);
+    return uploadProfileAvatar(userId, compressedAvatar);
   }
 
-  return convertAvatarToDataUrl(avatarSource);
+  const compressedAvatar = await convertAvatarToDataUrl(avatarSource);
+  return uploadProfileAvatar(userId, compressedAvatar);
 }
 
 export async function saveMemberProfile(
@@ -266,7 +269,7 @@ export async function saveMemberProfile(
   let avatarDataUrl = existingData?.avatarDataUrl || user.photoURL || "";
 
   if (avatarSource) {
-    avatarDataUrl = await resolveAvatarDataUrl(avatarSource);
+    avatarDataUrl = await resolveAvatarDataUrl(user.uid, avatarSource);
   }
 
   const profilePayload = {
@@ -388,7 +391,7 @@ export async function updateOwnMemberProfile(
   let avatarDataUrl = existingData.avatarDataUrl || user.photoURL || "";
 
   if (avatarSource) {
-    avatarDataUrl = await resolveAvatarDataUrl(avatarSource);
+    avatarDataUrl = await resolveAvatarDataUrl(user.uid, avatarSource);
   }
 
   const nextProfile: MemberProfile = {

@@ -6,7 +6,6 @@ import {
   FiClipboard,
   FiCopy,
   FiEye,
-  FiExternalLink,
   FiFileText,
   FiHelpCircle,
   FiHeart,
@@ -15,6 +14,8 @@ import {
   FiPhone,
   FiPlus,
   FiSearch,
+  FiTrash2,
+  FiUpload,
   FiUsers,
   FiX,
 } from "react-icons/fi";
@@ -23,6 +24,8 @@ import { GiMusicalNotes, GiMusicalScore } from "react-icons/gi";
 import { HiOutlineArrowRightOnRectangle } from "react-icons/hi2";
 import { LuCalendarDays } from "react-icons/lu";
 import { AvatarEditorModal } from "../components/AvatarEditorModal";
+import { SongAudioPlayer } from "../components/SongAudioPlayer";
+import { SongDocumentViewer } from "../components/SongDocumentViewer";
 import { firebaseAuth } from "../config/firebase";
 import { type AccessLevel, normalizeAccessLevel, normalizePermissions } from "../data/access";
 import logoAd from "../img/Login/LogoAD.png";
@@ -41,6 +44,9 @@ import {
   addAgendaEventComment,
   createHomePost,
   createAgendaEvent,
+  deleteAgendaEvent,
+  deleteHomePost,
+  type HomePostMediaRecord,
   listHomePosts,
   listAgendaEvents,
   toggleHomePostLike,
@@ -48,6 +54,24 @@ import {
   type HomeCommentRecord,
   type HomePostRecord,
 } from "../services/homeContent";
+import {
+  createSongLibraryItem,
+  deleteSongLibraryItem,
+  listSongLibrary,
+  SONG_VOICE_PARTS,
+  type SongAttachmentRecord,
+  type SongLibraryRecord,
+  type SongVoiceAssetRecord,
+  type SongVoicePart,
+} from "../services/songLibrary";
+import {
+  deleteStorageObjects,
+  formatStorageBytes,
+  MAX_SHARED_STORAGE_BYTES,
+  uploadPostMediaFiles,
+  uploadSongAttachment,
+  uploadSongVoiceFile,
+} from "../services/storageMedia";
 import { readImageFileAsDataUrl } from "../utils/avatarEditor";
 
 type HomePageProps = {
@@ -74,6 +98,7 @@ type FeedPost = {
   role: string;
   dateLabel: string;
   imageUrl?: string;
+  mediaItems: HomePostMediaRecord[];
   comments: CommentEntry[];
   likedByUids: string[];
   createdAtValue: number;
@@ -102,13 +127,25 @@ type SongLibraryItem = {
   artist: string;
   tone: string;
   category: string;
-  sourceUrl: string;
-  sourceLabel: string;
   notes: string;
   addedBy: string;
+  referenceUrl: string;
+  voiceAssets: SongVoiceAssetRecord[];
+  lyricFile: SongAttachmentRecord | null;
+  scoreFile: SongAttachmentRecord | null;
   createdAtValue: number;
   updatedAtValue: number;
 };
+
+type ComposerMediaPreview = {
+  id: string;
+  name: string;
+  previewUrl: string;
+  kind: "image" | "video";
+  sizeBytes: number;
+};
+
+type SongVoiceUploadMap = Partial<Record<SongVoicePart, File | null>>;
 
 type AgendaCalendarDay = {
   dateKey: string;
@@ -132,7 +169,36 @@ const initialPosts: FeedPost[] = [];
 const initialAgendaEvents: AgendaEvent[] = [];
 const initialSongLibrary: SongLibraryItem[] = [];
 const agendaWeekdayLabels = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
-const songLibraryStorageKey = "vocal-song-library";
+const supportedSongAudioExtensions = [
+  ".mp3",
+  ".wav",
+  ".m4a",
+  ".aac",
+  ".ogg",
+  ".oga",
+  ".opus",
+  ".flac",
+  ".weba",
+  ".mp4",
+  ".mpeg",
+  ".mpga",
+  ".3gp",
+  ".caf",
+  ".aif",
+  ".aiff",
+  ".amr",
+];
+const supportedSongDocumentExtensions = [
+  ".pdf",
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".webp",
+  ".gif",
+  ".bmp",
+  ".heic",
+  ".heif",
+];
 
 type MemberRoleVisual = {
   label: string;
@@ -344,71 +410,129 @@ function normalizeExternalUrl(value: string) {
   return `https://${trimmedValue}`;
 }
 
-function buildSongFallbackUrl(title: string, artist: string) {
-  const query = encodeURIComponent([title, artist].filter(Boolean).join(" "));
-  return `https://www.cifraclub.com.br/?q=${query}`;
+function normalizeComparableText(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .trim();
 }
 
-function inferSongSourceLabel(sourceUrl: string, usedFallback = false) {
-  if (usedFallback || sourceUrl.includes("cifraclub.com.br")) {
-    return "CifraClub";
+function getLowercaseFileExtension(fileName: string) {
+  const dotIndex = fileName.lastIndexOf(".");
+
+  if (dotIndex < 0) {
+    return "";
   }
 
-  return "Link externo";
+  return fileName.slice(dotIndex).toLowerCase();
 }
 
-function sortSongLibrary(library: SongLibraryItem[]) {
-  return [...library].sort((left, right) => left.title.localeCompare(right.title, "pt-BR", { sensitivity: "base" }));
+function fileMatchesExtensions(file: File, supportedExtensions: string[]) {
+  return supportedExtensions.includes(getLowercaseFileExtension(file.name));
 }
 
-function readSongLibraryFromStorage() {
-  if (typeof window === "undefined") {
-    return initialSongLibrary;
-  }
+function isSupportedSongAudioFile(file: File) {
+  const normalizedType = file.type.trim().toLowerCase();
 
-  try {
-    const storedValue = window.localStorage.getItem(songLibraryStorageKey);
-
-    if (!storedValue) {
-      return initialSongLibrary;
-    }
-
-    const parsedValue = JSON.parse(storedValue);
-
-    if (!Array.isArray(parsedValue)) {
-      return initialSongLibrary;
-    }
-
-    return sortSongLibrary(
-      parsedValue.filter(Boolean).map((item) => ({
-        id: String(item.id || createId("song")),
-        title: String(item.title || "").trim(),
-        artist: String(item.artist || "").trim(),
-        tone: String(item.tone || "").trim(),
-        category: String(item.category || "Culto").trim(),
-        sourceUrl: String(item.sourceUrl || "").trim(),
-        sourceLabel: String(item.sourceLabel || "Link externo").trim(),
-        notes: String(item.notes || "").trim(),
-        addedBy: String(item.addedBy || "Equipe do vocal").trim(),
-        createdAtValue: Number(item.createdAtValue) || Date.now(),
-        updatedAtValue: Number(item.updatedAtValue) || Number(item.createdAtValue) || Date.now(),
-      })).filter((item) => item.title),
-    );
-  } catch {
-    return initialSongLibrary;
-  }
+  return (
+    normalizedType.startsWith("audio/") ||
+    fileMatchesExtensions(file, supportedSongAudioExtensions) ||
+    ((normalizedType === "" || normalizedType === "application/octet-stream") && file.size > 0)
+  );
 }
 
-function saveSongLibraryToStorage(library: SongLibraryItem[]) {
-  if (typeof window === "undefined") {
-    return;
+function isSupportedSongDocumentFile(file: File) {
+  return (
+    file.type === "application/pdf" ||
+    file.type.startsWith("image/") ||
+    fileMatchesExtensions(file, supportedSongDocumentExtensions)
+  );
+}
+
+function describeSongPickerFile(file: File) {
+  return [
+    file.name || "arquivo sem nome",
+    formatStorageBytes(file.size),
+    file.type || "tipo não informado",
+  ].join(" • ");
+}
+
+function normalizeVoiceType(value: string): SongVoicePart | "" {
+  const normalizedValue = normalizeComparableText(value);
+
+  if (normalizedValue.includes("mezzo")) {
+    return "Mezzo-soprano";
   }
 
-  try {
-    window.localStorage.setItem(songLibraryStorageKey, JSON.stringify(library));
-  } catch {
-    // Ignore storage failures and keep the in-memory library.
+  if (normalizedValue.includes("soprano")) {
+    return "Soprano";
   }
+
+  if (normalizedValue.includes("contralto")) {
+    return "Contralto";
+  }
+
+  if (normalizedValue.includes("tenor")) {
+    return "Tenor";
+  }
+
+  if (normalizedValue.includes("baritono")) {
+    return "Barítono";
+  }
+
+  if (normalizedValue.includes("baixo")) {
+    return "Baixo";
+  }
+
+  return "";
+}
+
+function isGenericVoiceType(value: string) {
+  return normalizeComparableText(value) === "geral";
+}
+
+function buildPostPrimaryImageUrl(mediaItems: HomePostMediaRecord[]) {
+  return mediaItems.find((item) => item.kind === "image")?.url || "";
+}
+
+function createComposerMediaPreviews(files: File[]) {
+  return files.map((file, index) => ({
+    id: `${file.name}-${file.size}-${index}`,
+    name: file.name,
+    previewUrl: URL.createObjectURL(file),
+    kind: file.type.startsWith("video/") ? "video" : "image",
+    sizeBytes: file.size,
+  })) satisfies ComposerMediaPreview[];
+}
+
+function revokeComposerMediaPreviews(previews: ComposerMediaPreview[]) {
+  previews.forEach((preview) => {
+    URL.revokeObjectURL(preview.previewUrl);
+  });
+}
+
+function renderPostMediaGallery(mediaItems: HomePostMediaRecord[], title: string, detailView = false) {
+  if (mediaItems.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className={`home-feed-media-grid${detailView ? " is-detail" : ""}`}>
+      {mediaItems.map((mediaItem) => (
+        <div key={`${mediaItem.path}-${mediaItem.url}`} className={`home-feed-media${mediaItem.kind === "video" ? " is-video" : ""}`}>
+          {mediaItem.kind === "video" ? (
+            <video controls preload="metadata" playsInline>
+              <source src={mediaItem.url} type={mediaItem.contentType} />
+              Seu navegador não conseguiu abrir este vídeo.
+            </video>
+          ) : (
+            <img src={mediaItem.url} alt={title} />
+          )}
+        </div>
+      ))}
+    </div>
+  );
 }
 
 function resolveRoleLabel(role: string, accountLevel: AccessLevel, gender: string) {
@@ -566,6 +690,8 @@ function mapAgendaEventRecord(event: AgendaEventRecord): AgendaEvent {
 }
 
 function mapHomePostRecord(post: HomePostRecord): FeedPost {
+  const mediaItems = Array.isArray(post.mediaItems) ? post.mediaItems : [];
+
   return {
     id: post.id,
     category: post.category,
@@ -574,7 +700,8 @@ function mapHomePostRecord(post: HomePostRecord): FeedPost {
     author: post.author,
     role: post.role,
     dateLabel: formatDateTimeLabel(post.createdAt),
-    imageUrl: post.imageUrl,
+    imageUrl: post.imageUrl || buildPostPrimaryImageUrl(mediaItems),
+    mediaItems,
     comments: Array.isArray(post.comments) ? post.comments : [],
     likedByUids: Array.isArray(post.likedByUids) ? post.likedByUids : [],
     createdAtValue: resolveTimestampMillis(post.createdAt),
@@ -582,37 +709,40 @@ function mapHomePostRecord(post: HomePostRecord): FeedPost {
   };
 }
 
-function buildOptimisticHomePost(input: {
-  id: string;
-  category: string;
-  title: string;
-  content: string;
-  author: string;
-  role: string;
-  imageUrl: string;
-  expirationDays: number;
-}): FeedPost {
-  const now = Date.now();
-
+function mapSongLibraryRecord(song: SongLibraryRecord): SongLibraryItem {
   return {
-    id: input.id,
-    category: input.category,
-    title: input.title,
-    content: input.content,
-    author: input.author,
-    role: input.role,
-    dateLabel: formatDateTimeLabel(new Date(now)),
-    imageUrl: input.imageUrl,
-    comments: [],
-    likedByUids: [],
-    createdAtValue: now,
-    expirationDays: input.expirationDays,
-    syncState: "pending",
+    id: song.id,
+    title: song.title,
+    artist: song.artist,
+    tone: song.tone,
+    category: song.category,
+    notes: song.notes,
+    addedBy: song.addedBy,
+    referenceUrl: song.referenceUrl,
+    voiceAssets: Array.isArray(song.voiceAssets) ? song.voiceAssets : [],
+    lyricFile: song.lyricFile || null,
+    scoreFile: song.scoreFile || null,
+    createdAtValue: resolveTimestampMillis(song.createdAt),
+    updatedAtValue: resolveTimestampMillis(song.updatedAt),
   };
 }
 
 function extractOperationMessage(error: unknown, fallback: string) {
+  if (error && typeof error === "object" && "code" in error && typeof error.code === "string") {
+    if (error.code === "storage/unauthorized") {
+      return "Seu usuário não tem permissão para enviar esse arquivo ao Storage.";
+    }
+
+    if (error.code === "storage/retry-limit-exceeded") {
+      return "A conexão caiu durante o envio ao Storage. Tente novamente no celular com internet estável ou envie menos arquivos por vez.";
+    }
+  }
+
   if (error instanceof Error && error.message.trim()) {
+    if (/ERR_HTTP2_PROTOCOL_ERROR|ERR_CONNECTION_(?:RESET|CLOSED)|network|timeout/i.test(error.message)) {
+      return "A conexão com o Storage falhou durante o envio. Tente novamente com internet estável ou envie um arquivo por vez.";
+    }
+
     return error.message;
   }
 
@@ -643,6 +773,11 @@ async function fetchAgendaContent() {
 async function fetchHomePostsContent() {
   const homePosts = await listHomePosts();
   return homePosts.filter((post) => !isPostExpired(post.createdAt, post.expirationDays)).map(mapHomePostRecord);
+}
+
+async function fetchSongLibraryContent() {
+  const library = await listSongLibrary();
+  return library.map(mapSongLibraryRecord);
 }
 
 async function fetchDirectoryContent(currentUid: string, memberProfile: MemberProfile | null) {
@@ -695,9 +830,14 @@ export function HomePage({
   const [activePostId, setActivePostId] = useState("");
   const [activeAgendaDate, setActiveAgendaDate] = useState("");
   const [agendaMonthKey, setAgendaMonthKey] = useState(() => formatMonthKey(new Date()));
-  const [songs, setSongs] = useState<SongLibraryItem[]>(() => readSongLibraryFromStorage());
+  const [songs, setSongs] = useState<SongLibraryItem[]>(initialSongLibrary);
+  const [songsLoading, setSongsLoading] = useState(false);
   const [songStatus, setSongStatus] = useState("");
   const [activeSongId, setActiveSongId] = useState("");
+  const [selectedSongAssetPath, setSelectedSongAssetPath] = useState("");
+  const [selectedSongDocumentKind, setSelectedSongDocumentKind] = useState<"lyrics" | "score">("lyrics");
+  const [isSongDocumentExpanded, setIsSongDocumentExpanded] = useState(false);
+  const [songPickerDebug, setSongPickerDebug] = useState("");
   const [composerDraft, setComposerDraft] = useState({
     category: "Aviso",
     title: "",
@@ -711,8 +851,14 @@ export function HomePage({
     artist: "",
     tone: "",
     sourceUrl: "",
-    songCategory: "Culto",
+    songCategory: "Clássicos",
+    customSongCategory: "",
   });
+  const [postMediaFiles, setPostMediaFiles] = useState<File[]>([]);
+  const [postMediaPreviews, setPostMediaPreviews] = useState<ComposerMediaPreview[]>([]);
+  const [songVoiceFiles, setSongVoiceFiles] = useState<SongVoiceUploadMap>({});
+  const [songLyricFile, setSongLyricFile] = useState<File | null>(null);
+  const [songScoreFile, setSongScoreFile] = useState<File | null>(null);
   const [profile, setProfile] = useState<MemberProfile | null>(null);
   const [profileDraft, setProfileDraft] = useState<OwnMemberProfileUpdate>(() =>
     buildProfileDraft(null, memberName, memberGender, memberVocalRange),
@@ -721,9 +867,6 @@ export function HomePage({
   const [profileAvatarDataUrl, setProfileAvatarDataUrl] = useState<string | null>(null);
   const [profileAvatarEditorSource, setProfileAvatarEditorSource] = useState("");
   const [showProfileAvatarEditor, setShowProfileAvatarEditor] = useState(false);
-  const [composerImageEditorSource, setComposerImageEditorSource] = useState("");
-  const [showComposerImageEditor, setShowComposerImageEditor] = useState(false);
-  const [composerImageStatus, setComposerImageStatus] = useState("");
   const [profileSaving, setProfileSaving] = useState(false);
   const [profileStatus, setProfileStatus] = useState("");
   const [agendaLoading, setAgendaLoading] = useState(false);
@@ -738,6 +881,9 @@ export function HomePage({
   const [selectedDirectoryUid, setSelectedDirectoryUid] = useState("");
   const [agendaSeenAt, setAgendaSeenAt] = useState(0);
   const mainPanelRef = useRef<HTMLDivElement | null>(null);
+  const songVoiceInputRefs = useRef<Partial<Record<SongVoicePart, HTMLInputElement | null>>>({});
+  const songLyricsInputRef = useRef<HTMLInputElement | null>(null);
+  const songScoreInputRef = useRef<HTMLInputElement | null>(null);
 
   const deferredQuery = useDeferredValue(query.trim().toLowerCase());
   const currentUser = firebaseAuth.currentUser;
@@ -761,6 +907,15 @@ export function HomePage({
   const canManageAgenda = canPost || effectivePermissions.includes("Mexer na agenda");
   const canManageSongs =
     resolvedAccessLevel === "administration" || effectivePermissions.includes("Adicionar músicas");
+  const canViewAllSongTracks =
+    resolvedAccessLevel === "administration" ||
+    resolvedLeadershipRole === "Desenvolvedor" ||
+    resolvedLeadershipRole === "Maestro" ||
+    resolvedLeadershipRole === "Secretário";
+  const canRemoveManagedContent =
+    resolvedAccessLevel === "administration" ||
+    resolvedLeadershipRole === "Maestro" ||
+    resolvedLeadershipRole === "Secretário";
   const canComment =
     canPost ||
     effectivePermissions.includes("Comentar") ||
@@ -777,17 +932,20 @@ export function HomePage({
       setDirectoryLoading(true);
       setAgendaLoading(true);
       setHomeLoading(true);
+      setSongsLoading(true);
       setProfileStatus("");
       setAgendaStatus("");
       setHomeStatus("");
+      setSongStatus("");
       setDirectoryStatus("");
 
       try {
         const profileResult = await getMemberProfile(currentUid);
-        const [agendaResult, directoryResult, homeResult] = await Promise.allSettled([
+        const [agendaResult, directoryResult, homeResult, songsResult] = await Promise.allSettled([
           fetchAgendaContent(),
           fetchDirectoryContent(currentUid, profileResult),
           fetchHomePostsContent(),
+          fetchSongLibraryContent(),
         ]);
 
         if (!isActive) {
@@ -813,6 +971,12 @@ export function HomePage({
           setHomeStatus("Não foi possível carregar o mural agora.");
         }
 
+        if (songsResult.status === "fulfilled") {
+          setSongs(songsResult.value);
+        } else {
+          setSongStatus("Não foi possível carregar a biblioteca musical agora.");
+        }
+
         if (directoryResult.status === "fulfilled") {
           setDirectoryMembers(sortDirectoryMembers(directoryResult.value.members));
           setDirectoryStatus(directoryResult.value.statusMessage);
@@ -830,6 +994,7 @@ export function HomePage({
           setDirectoryLoading(false);
           setAgendaLoading(false);
           setHomeLoading(false);
+          setSongsLoading(false);
         }
       }
     }
@@ -932,7 +1097,16 @@ export function HomePage({
     }
 
     return songs.filter((song) =>
-      [song.title, song.artist, song.tone, song.category, song.sourceLabel, song.notes, song.addedBy]
+      [
+        song.title,
+        song.artist,
+        song.tone,
+        song.category,
+        song.notes,
+        song.addedBy,
+        song.referenceUrl,
+        ...song.voiceAssets.map((asset) => asset.voiceType),
+      ]
         .join(" ")
         .toLowerCase()
         .includes(deferredQuery),
@@ -954,8 +1128,68 @@ export function HomePage({
     filteredDirectoryMembers.find((member) => member.uid === selectedDirectoryUid) || null;
   const activePost = posts.find((post) => post.id === activePostId) || null;
   const activeSong = songs.find((song) => song.id === activeSongId) || null;
+  const currentVoicePart = normalizeVoiceType(resolvedVocalRange);
   const nextEvent = filteredAgendaEvents[0] ?? agendaEvents[0];
   const profileAvatar = profileAvatarPreview || currentUser?.photoURL || profile?.avatarDataUrl || "";
+  const sharedStorageUsedBytes = useMemo(
+    () =>
+      posts.reduce(
+        (total, post) => total + post.mediaItems.reduce((postTotal, mediaItem) => postTotal + mediaItem.sizeBytes, 0),
+        0,
+      ) +
+      songs.reduce(
+        (total, song) =>
+          total +
+          song.voiceAssets.reduce((songTotal, asset) => songTotal + asset.sizeBytes, 0) +
+          (song.lyricFile?.sizeBytes || 0) +
+          (song.scoreFile?.sizeBytes || 0),
+        0,
+      ),
+    [posts, songs],
+  );
+  const visibleSongVoiceAssets = useMemo(() => {
+    if (!activeSong) {
+      return [];
+    }
+
+    if (canViewAllSongTracks) {
+      return activeSong.voiceAssets;
+    }
+
+    const genericAssets = activeSong.voiceAssets.filter((asset) => isGenericVoiceType(asset.voiceType));
+
+    if (!currentVoicePart) {
+      return genericAssets;
+    }
+
+    const currentVoiceAssets = activeSong.voiceAssets.filter((asset) => asset.voiceType === currentVoicePart);
+
+    return [...currentVoiceAssets, ...genericAssets.filter((asset) => asset.voiceType !== currentVoicePart)];
+  }, [activeSong, canViewAllSongTracks, currentVoicePart]);
+  const selectedSongVoiceAsset = useMemo(
+    () => visibleSongVoiceAssets.find((asset) => asset.path === selectedSongAssetPath) || visibleSongVoiceAssets[0] || null,
+    [selectedSongAssetPath, visibleSongVoiceAssets],
+  );
+  const availableSongDocuments = useMemo(
+    () => ({
+      lyrics: activeSong?.lyricFile || null,
+      score: activeSong?.scoreFile || null,
+    }),
+    [activeSong],
+  );
+  const selectedSongDocument =
+    selectedSongDocumentKind === "lyrics" ? availableSongDocuments.lyrics : availableSongDocuments.score;
+  const selectedSongVoiceUrl = selectedSongVoiceAsset?.url || "";
+  const selectedSongDocumentUrl = selectedSongDocument?.url || "";
+  const hasOverlayModalOpen =
+    showComposer ||
+    Boolean(activeSong) ||
+    showHelpModal ||
+    showProfileModal ||
+    showMemberDetailModal ||
+    showNotificationsModal ||
+    showLogoutModal ||
+    showProfileAvatarEditor;
   const notificationItems = useMemo<AgendaNotificationItem[]>(
     () =>
       unreadAgendaItems.map((event) => ({
@@ -1002,10 +1236,160 @@ export function HomePage({
   }, [activeSongId, songs]);
 
   useEffect(() => {
+    setSelectedSongAssetPath("");
+    setSelectedSongDocumentKind("lyrics");
+    setIsSongDocumentExpanded(false);
+  }, [activeSongId]);
+
+  useEffect(() => {
+    if (visibleSongVoiceAssets.length === 0) {
+      setSelectedSongAssetPath("");
+      return;
+    }
+
+    if (!visibleSongVoiceAssets.some((asset) => asset.path === selectedSongAssetPath)) {
+      setSelectedSongAssetPath(visibleSongVoiceAssets[0].path);
+    }
+  }, [selectedSongAssetPath, visibleSongVoiceAssets]);
+
+  useEffect(() => {
+    if (!activeSong) {
+      setSelectedSongDocumentKind("lyrics");
+      setIsSongDocumentExpanded(false);
+      return;
+    }
+
+    if (availableSongDocuments[selectedSongDocumentKind]) {
+      return;
+    }
+
+    if (availableSongDocuments.lyrics) {
+      setSelectedSongDocumentKind("lyrics");
+      return;
+    }
+
+    if (availableSongDocuments.score) {
+      setSelectedSongDocumentKind("score");
+    }
+  }, [activeSong, availableSongDocuments, selectedSongDocumentKind]);
+
+  useEffect(() => {
+    if (!selectedSongDocumentUrl) {
+      setIsSongDocumentExpanded(false);
+    }
+  }, [selectedSongDocumentUrl]);
+
+  useEffect(() => {
     if (activeAgendaDate && !agendaEventsByDate.has(activeAgendaDate)) {
       setActiveAgendaDate("");
     }
   }, [activeAgendaDate, agendaEventsByDate]);
+
+  useEffect(() => {
+    if (typeof document === "undefined") {
+      return undefined;
+    }
+
+    const { body, documentElement } = document;
+    const previousBodyOverflow = body.style.overflow;
+    const previousHtmlOverflow = documentElement.style.overflow;
+    const previousBodyOverscroll = body.style.overscrollBehaviorY;
+    const previousHtmlOverscroll = documentElement.style.overscrollBehaviorY;
+
+    if (hasOverlayModalOpen) {
+      body.style.overflow = "hidden";
+      documentElement.style.overflow = "hidden";
+      body.style.overscrollBehaviorY = "none";
+      documentElement.style.overscrollBehaviorY = "none";
+    }
+
+    return () => {
+      body.style.overflow = previousBodyOverflow;
+      documentElement.style.overflow = previousHtmlOverflow;
+      body.style.overscrollBehaviorY = previousBodyOverscroll;
+      documentElement.style.overscrollBehaviorY = previousHtmlOverscroll;
+    };
+  }, [hasOverlayModalOpen]);
+
+  useEffect(
+    () => () => {
+      revokeComposerMediaPreviews(postMediaPreviews);
+    },
+    [postMediaPreviews],
+  );
+
+  const clearPostMediaSelection = () => {
+    setPostMediaFiles([]);
+    setPostMediaPreviews((current) => {
+      revokeComposerMediaPreviews(current);
+      return [];
+    });
+  };
+
+  const resetSongUploadSelection = () => {
+    setSongVoiceFiles({});
+    setSongLyricFile(null);
+    setSongScoreFile(null);
+    setSongPickerDebug("");
+  };
+
+  const applySongVoiceFileSelection = (voiceType: SongVoicePart, file: File | null, sourceLabel: string) => {
+    if (!file) {
+      setSongPickerDebug(`Nenhum arquivo foi retornado para ${voiceType} via ${sourceLabel}.`);
+      return;
+    }
+
+    if (!isSupportedSongAudioFile(file)) {
+      setSongStatus("Envie apenas arquivos de áudio para cada voz.");
+      setSongPickerDebug(`Arquivo rejeitado para ${voiceType}: ${describeSongPickerFile(file)}.`);
+      return;
+    }
+
+    setSongVoiceFiles((current) => ({ ...current, [voiceType]: file }));
+    setSongStatus("");
+    setSongPickerDebug(`${voiceType}: ${describeSongPickerFile(file)} via ${sourceLabel}.`);
+  };
+
+  const applySongAttachmentFileSelection = (
+    attachmentType: "lyrics" | "score",
+    file: File | null,
+    sourceLabel: string,
+  ) => {
+    if (!file) {
+      setSongPickerDebug(`Nenhum arquivo foi retornado para ${attachmentType === "lyrics" ? "a letra" : "a partitura"} via ${sourceLabel}.`);
+      return;
+    }
+
+    if (!isSupportedSongDocumentFile(file)) {
+      setSongStatus("Letra e partitura aceitam apenas PDF ou imagem.");
+      setSongPickerDebug(`Arquivo rejeitado para ${attachmentType === "lyrics" ? "letra" : "partitura"}: ${describeSongPickerFile(file)}.`);
+      return;
+    }
+
+    if (attachmentType === "lyrics") {
+      setSongLyricFile(file);
+    } else {
+      setSongScoreFile(file);
+    }
+
+    setSongStatus("");
+    setSongPickerDebug(`${attachmentType === "lyrics" ? "Letra" : "Partitura"}: ${describeSongPickerFile(file)} via ${sourceLabel}.`);
+  };
+
+  const openSongVoiceLocalPicker = (voiceType: SongVoicePart) => {
+    setSongPickerDebug(`Abrindo seletor local para ${voiceType}...`);
+    songVoiceInputRefs.current[voiceType]?.click();
+  };
+
+  const openSongAttachmentLocalPicker = (attachmentType: "lyrics" | "score") => {
+    setSongPickerDebug(`Abrindo seletor local para ${attachmentType === "lyrics" ? "a letra" : "a partitura"}...`);
+    if (attachmentType === "lyrics") {
+      songLyricsInputRef.current?.click();
+      return;
+    }
+
+    songScoreInputRef.current?.click();
+  };
 
   const markAgendaNotificationsAsSeen = () => {
     const latestAgendaTimestamp = agendaEvents.reduce(
@@ -1061,9 +1445,8 @@ export function HomePage({
 
   const closeComposer = () => {
     setShowComposer(false);
-    setComposerImageEditorSource("");
-    setShowComposerImageEditor(false);
-    setComposerImageStatus("");
+    clearPostMediaSelection();
+    resetSongUploadSelection();
   };
 
   const openPostDetail = (postId: string) => {
@@ -1077,10 +1460,12 @@ export function HomePage({
   const openSongDetail = (songId: string) => {
     setActivePostId("");
     setActiveAgendaDate("");
+    setIsSongDocumentExpanded(false);
     setActiveSongId(songId);
   };
 
   const closeSongDetail = () => {
+    setIsSongDocumentExpanded(false);
     setActiveSongId("");
   };
 
@@ -1110,11 +1495,11 @@ export function HomePage({
       artist: "",
       tone: "",
       sourceUrl: "",
-      songCategory: "Culto",
+      songCategory: "Clássicos",
+      customSongCategory: "",
     });
-    setComposerImageEditorSource("");
-    setShowComposerImageEditor(false);
-    setComposerImageStatus("");
+    clearPostMediaSelection();
+    resetSongUploadSelection();
     setShowComposer(true);
   };
 
@@ -1123,12 +1508,51 @@ export function HomePage({
     setComposerDraft((current) => ({ ...current, [name]: value }));
   };
 
+  const handlePostMediaFilesChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const nextFiles = Array.from(event.target.files || []).filter(
+      (file) => file.type.startsWith("image/") || file.type.startsWith("video/"),
+    );
+    event.target.value = "";
+
+    if (nextFiles.length === 0) {
+      setHomeStatus("Selecione imagens ou vídeos válidos para o mural.");
+      return;
+    }
+
+    clearPostMediaSelection();
+    setPostMediaFiles(nextFiles);
+    setPostMediaPreviews(createComposerMediaPreviews(nextFiles));
+    setHomeStatus("");
+  };
+
+  const handleSongVoiceFileChange = (voiceType: SongVoicePart, event: React.ChangeEvent<HTMLInputElement>) => {
+    const input = event.currentTarget;
+    const file = input.files?.[0] || null;
+    input.value = "";
+    applySongVoiceFileSelection(voiceType, file, "dispositivo");
+  };
+
+  const handleSongAttachmentChange = (
+    attachmentType: "lyrics" | "score",
+    event: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    const input = event.currentTarget;
+    const file = input.files?.[0] || null;
+    input.value = "";
+    applySongAttachmentFileSelection(attachmentType, file, "dispositivo");
+  };
+
   const publishComposerEntry = async () => {
     if (composerMode !== "song" && (!composerDraft.title.trim() || !composerDraft.content.trim())) {
       return;
     }
 
     if (composerMode === "song") {
+      if (!currentUid) {
+        setSongStatus("Não foi possível identificar sua sessão para salvar a música.");
+        return;
+      }
+
       const normalizedTitle = composerDraft.title.trim();
 
       if (!normalizedTitle) {
@@ -1136,31 +1560,93 @@ export function HomePage({
         return;
       }
 
-      const normalizedArtist = composerDraft.artist.trim();
-      const manualSourceUrl = normalizeExternalUrl(composerDraft.sourceUrl);
-      const sourceUrl = manualSourceUrl || buildSongFallbackUrl(normalizedTitle, normalizedArtist);
-      const usedFallback = !manualSourceUrl;
-      const now = Date.now();
-      const nextSong: SongLibraryItem = {
-        id: createId("song"),
-        title: normalizedTitle,
-        artist: normalizedArtist,
-        tone: composerDraft.tone.trim(),
-        category: composerDraft.songCategory || "Culto",
-        sourceUrl,
-        sourceLabel: inferSongSourceLabel(sourceUrl, usedFallback),
-        notes: composerDraft.content.trim(),
-        addedBy: resolvedName,
-        createdAtValue: now,
-        updatedAtValue: now,
-      };
+      const voiceFileEntries = Object.entries(songVoiceFiles).filter((entry): entry is [SongVoicePart, File] => {
+        const [, file] = entry;
+        return Boolean(file);
+      });
 
-      const nextSongs = sortSongLibrary([nextSong, ...songs]);
-      setSongs(nextSongs);
-      saveSongLibraryToStorage(nextSongs);
-      setSongStatus("Música adicionada à biblioteca do vocal.");
-      setActiveTab("songs");
-      closeComposer();
+      if (voiceFileEntries.length === 0 && !songLyricFile && !songScoreFile && !composerDraft.sourceUrl.trim()) {
+        setSongStatus("Envie ao menos um arquivo por voz, a letra, a partitura ou um link de apoio.");
+        return;
+      }
+
+      const uploadBytesTotal = voiceFileEntries.reduce((total, [, file]) => total + file.size, 0) + (songLyricFile?.size || 0) + (songScoreFile?.size || 0);
+
+      if (sharedStorageUsedBytes + uploadBytesTotal > MAX_SHARED_STORAGE_BYTES) {
+        setSongStatus("Esse envio ultrapassa o limite configurado de 5 GB do storage compartilhado.");
+        return;
+      }
+
+      setComposerSubmitting(true);
+      setSongStatus("Enviando arquivos da música para o Storage...");
+
+      const songId = createId("song");
+      const uploadedPaths: string[] = [];
+
+      try {
+        const voiceAssets: SongVoiceAssetRecord[] = [];
+
+        for (const [voiceType, file] of voiceFileEntries) {
+          const asset = await uploadSongVoiceFile(songId, voiceType, file);
+          uploadedPaths.push(asset.path);
+          voiceAssets.push({
+            ...asset,
+            voiceType,
+          });
+        }
+
+        const lyricFile = songLyricFile
+          ? {
+              ...(await uploadSongAttachment(songId, "lyrics", songLyricFile)),
+              attachmentType: "lyrics",
+            }
+          : null;
+
+        if (lyricFile) {
+          uploadedPaths.push(lyricFile.path);
+        }
+
+        const scoreFile = songScoreFile
+          ? {
+              ...(await uploadSongAttachment(songId, "score", songScoreFile)),
+              attachmentType: "score",
+            }
+          : null;
+
+        if (scoreFile) {
+          uploadedPaths.push(scoreFile.path);
+        }
+
+        await createSongLibraryItem({
+          id: songId,
+          title: normalizedTitle,
+          artist: composerDraft.artist.trim(),
+          tone: composerDraft.tone.trim(),
+          category: composerDraft.customSongCategory.trim() || composerDraft.songCategory || "Clássicos",
+          notes: composerDraft.content.trim(),
+          addedBy: resolvedName,
+          createdByUid: currentUid,
+          referenceUrl: normalizeExternalUrl(composerDraft.sourceUrl),
+          voiceAssets,
+          lyricFile,
+          scoreFile,
+        });
+
+        const nextSongs = await fetchSongLibraryContent();
+        setSongs(nextSongs);
+        setSongStatus("Música adicionada com arquivos organizados por voz.");
+        setActiveTab("songs");
+        closeComposer();
+      } catch (error) {
+        if (uploadedPaths.length > 0) {
+          await deleteStorageObjects(uploadedPaths).catch(() => undefined);
+        }
+
+        setSongStatus(extractOperationMessage(error, "Não foi possível salvar a música agora."));
+      } finally {
+        setComposerSubmitting(false);
+      }
+
       return;
     }
 
@@ -1205,61 +1691,52 @@ export function HomePage({
         return;
       }
 
-      const optimisticPostId = createId("post");
-      const optimisticPost = buildOptimisticHomePost({
-        id: optimisticPostId,
-        category: composerDraft.category || "Aviso",
-        title: composerDraft.title.trim(),
-        content: composerDraft.content.trim(),
-        author: resolvedName,
-        role: roleLabel,
-        imageUrl: composerDraft.imageUrl.trim(),
-        expirationDays: Number(composerDraft.expirationDays) || 0,
-      });
+      const uploadBytesTotal = postMediaFiles.reduce((total, file) => total + file.size, 0);
 
-      setQuery("");
-      setPosts((current) => [optimisticPost, ...current]);
-      setHomeStatus("Publicação enviada. Atualizando o mural...");
-      setActiveTab("home");
-      closeComposer();
+      if (sharedStorageUsedBytes + uploadBytesTotal > MAX_SHARED_STORAGE_BYTES) {
+        setHomeStatus("Esse envio ultrapassa o limite configurado de 5 GB do storage compartilhado.");
+        return;
+      }
 
       setComposerSubmitting(true);
+      setHomeStatus(postMediaFiles.length > 0 ? "Enviando mídia para o mural..." : "Publicando no mural...");
+
+      const postId = createId("post");
+      const uploadedPaths: string[] = [];
 
       try {
+        const uploadedMedia = postMediaFiles.length > 0 ? await uploadPostMediaFiles(postId, postMediaFiles) : [];
+        uploadedMedia.forEach((mediaItem) => uploadedPaths.push(mediaItem.path));
+
+        const mediaItems = uploadedMedia.filter(
+          (mediaItem): mediaItem is HomePostMediaRecord => mediaItem.kind === "image" || mediaItem.kind === "video",
+        );
+
         await createHomePost({
+          id: postId,
           category: composerDraft.category || "Aviso",
           title: composerDraft.title.trim(),
           content: composerDraft.content.trim(),
           author: resolvedName,
           role: roleLabel,
-          imageUrl: composerDraft.imageUrl.trim(),
+          imageUrl: buildPostPrimaryImageUrl(mediaItems),
+          mediaItems,
           expirationDays: Number(composerDraft.expirationDays) || 0,
           createdByUid: currentUid,
         });
 
         const nextPosts = await fetchHomePostsContent();
-        if (nextPosts.length > 0) {
-          setPosts(nextPosts);
-        } else {
-          setPosts((current) =>
-            current.map((post) =>
-              post.id === optimisticPostId ? { ...post, syncState: undefined } : post,
-            ),
-          );
-        }
+        setPosts(nextPosts);
+        setQuery("");
         setHomeStatus("Publicação enviada ao mural.");
+        setActiveTab("home");
+        closeComposer();
       } catch (error) {
-        setPosts((current) =>
-          current.map((post) =>
-            post.id === optimisticPostId
-              ? {
-                  ...post,
-                  syncState: "failed",
-                }
-              : post,
-          ),
-        );
-        setHomeStatus(extractOperationMessage(error, "A publicação apareceu na tela, mas a sincronização com o servidor falhou."));
+        if (uploadedPaths.length > 0) {
+          await deleteStorageObjects(uploadedPaths).catch(() => undefined);
+        }
+
+        setHomeStatus(extractOperationMessage(error, "Não foi possível publicar no mural agora."));
       } finally {
         setComposerSubmitting(false);
       }
@@ -1435,28 +1912,6 @@ export function HomePage({
     });
   };
 
-  const openComposerImageEditor = async (file: File) => {
-    const imageDataUrl = await readImageFileAsDataUrl(file);
-
-    setComposerImageEditorSource(imageDataUrl);
-    setShowComposerImageEditor(true);
-  };
-
-  const handleComposerImageChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-
-    if (!file) {
-      return;
-    }
-
-    void openComposerImageEditor(file).catch((error) => {
-      setComposerImageStatus(
-        error instanceof Error ? error.message : "Não foi possível abrir o editor da imagem agora.",
-      );
-    });
-  };
-
   const saveProfile = async () => {
     if (!currentUser) {
       setProfileStatus("Não foi possível identificar a sua sessão.");
@@ -1490,6 +1945,87 @@ export function HomePage({
       );
     } finally {
       setProfileSaving(false);
+    }
+  };
+
+  const removeAgendaEvent = async (eventId: string, title: string) => {
+    if (!canRemoveManagedContent) {
+      return;
+    }
+
+    if (!window.confirm(`Remover o compromisso "${title}" da agenda?`)) {
+      return;
+    }
+
+    setAgendaStatus("Removendo compromisso...");
+
+    try {
+      await deleteAgendaEvent(eventId);
+      const nextAgendaEvents = await fetchAgendaContent();
+      setAgendaEvents(nextAgendaEvents);
+      setAgendaStatus("Compromisso removido da agenda.");
+    } catch (error) {
+      setAgendaStatus(extractOperationMessage(error, "Não foi possível remover esse compromisso agora."));
+    }
+  };
+
+  const removeHomePost = async (post: FeedPost) => {
+    if (!canRemoveManagedContent) {
+      return;
+    }
+
+    if (!window.confirm(`Remover a publicação "${post.title}" e toda a mídia vinculada?`)) {
+      return;
+    }
+
+    setHomeStatus("Removendo publicação...");
+
+    try {
+      const storagePaths = post.mediaItems.map((mediaItem) => mediaItem.path);
+
+      if (storagePaths.length > 0) {
+        await deleteStorageObjects(storagePaths);
+      }
+
+      await deleteHomePost(post.id);
+      const nextPosts = await fetchHomePostsContent();
+      setPosts(nextPosts);
+      setActivePostId("");
+      setHomeStatus("Publicação removida do mural.");
+    } catch (error) {
+      setHomeStatus(extractOperationMessage(error, "Não foi possível remover essa publicação agora."));
+    }
+  };
+
+  const removeSong = async (song: SongLibraryItem) => {
+    if (!canRemoveManagedContent) {
+      return;
+    }
+
+    if (!window.confirm(`Remover a música "${song.title}" e todos os arquivos enviados?`)) {
+      return;
+    }
+
+    setSongStatus("Removendo música e arquivos...");
+
+    try {
+      const storagePaths = [
+        ...song.voiceAssets.map((asset) => asset.path),
+        song.lyricFile?.path || "",
+        song.scoreFile?.path || "",
+      ].filter(Boolean);
+
+      if (storagePaths.length > 0) {
+        await deleteStorageObjects(storagePaths);
+      }
+
+      await deleteSongLibraryItem(song.id);
+      const nextSongs = await fetchSongLibraryContent();
+      setSongs(nextSongs);
+      setActiveSongId("");
+      setSongStatus("Música removida da biblioteca.");
+    } catch (error) {
+      setSongStatus(extractOperationMessage(error, "Não foi possível remover essa música agora."));
     }
   };
 
@@ -1719,7 +2255,7 @@ export function HomePage({
                   <h3>{post.title}</h3>
                   <p>{post.content}</p>
 
-                  {post.imageUrl ? (
+                  {post.mediaItems.length > 0 ? renderPostMediaGallery(post.mediaItems, post.title) : post.imageUrl ? (
                     <div className="home-feed-media">
                       <img src={post.imageUrl} alt={post.title} />
                     </div>
@@ -1731,13 +2267,28 @@ export function HomePage({
                   </div>
 
                   <div className="home-post-actions">
-                    <button type="button" className="home-secondary-action compact" onClick={(event) => {
-                      event.stopPropagation();
-                      openPostDetail(post.id);
-                    }}>
-                      <FiArrowLeft size={15} />
-                      Abrir publicação
-                    </button>
+                    <div className="home-post-inline-actions">
+                      <button type="button" className="home-secondary-action compact" onClick={(event) => {
+                        event.stopPropagation();
+                        openPostDetail(post.id);
+                      }}>
+                        <FiArrowLeft size={15} />
+                        Abrir publicação
+                      </button>
+                      {canRemoveManagedContent ? (
+                        <button
+                          type="button"
+                          className="home-secondary-action compact danger"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            void removeHomePost(post);
+                          }}
+                        >
+                          <FiTrash2 size={15} />
+                          Remover
+                        </button>
+                      ) : null}
+                    </div>
                     <div className="home-post-stats">
                       <span><FiHeart size={14} /> {post.likedByUids.length}</span>
                       <span><FiMessageCircle size={14} /> {post.comments.length}</span>
@@ -1947,20 +2498,55 @@ export function HomePage({
                 <div className="home-song-drive-header">
                   <div>
                     <p className="home-card-eyebrow">Biblioteca do vocal</p>
-                    <h3>Músicas e cifras</h3>
-                    <p>Abra letras, cifras e referências como se estivesse em uma pasta organizada do repertório, com acesso rápido para ensaio, culto e ministrações especiais.</p>
+                    <h3>Músicas por voz, letra e partitura</h3>
+                    <p>O repertório agora fica organizado no Firebase com arquivos por voz, letra em PDF/imagem, partitura opcional e remoção controlada pela liderança.</p>
                   </div>
 
                   <div className="home-song-drive-stats">
-                    <span className="home-feed-count-pill">{filteredSongs.length} arquivo(s)</span>
-                    <span className="home-feed-count-pill">{songs.filter((song) => song.category === "Ensaio").length} ensaio</span>
+                    <span className="home-feed-count-pill">{filteredSongs.length} música(s)</span>
+                    <span className="home-feed-count-pill">{formatStorageBytes(sharedStorageUsedBytes)} / {formatStorageBytes(MAX_SHARED_STORAGE_BYTES)}</span>
                   </div>
                 </div>
 
-                {filteredSongs.length > 0 ? (
+                <div className="home-storage-usage-card">
+                  <div>
+                    <strong>Storage compartilhado</strong>
+                    <p>
+                      O mural e a biblioteca musical usam um limite monitorado de 5 GB para evitar estouro de mídia em imagens, vídeos, áudios e documentos.
+                    </p>
+                  </div>
+
+                  <div className="home-storage-meter" aria-hidden="true">
+                    <span style={{ width: `${Math.min(100, (sharedStorageUsedBytes / MAX_SHARED_STORAGE_BYTES) * 100)}%` }} />
+                  </div>
+
+                  <small>
+                    {formatStorageBytes(sharedStorageUsedBytes)} usados. {currentVoicePart ? `Seu timbre atual: ${currentVoicePart}.` : "Defina seu timbre no perfil para abrir apenas o material certo da sua voz."}
+                  </small>
+                </div>
+
+                {songsLoading ? (
+                  <div className="home-song-library-empty">
+                    <GiMusicalNotes size={34} />
+                    <strong>Carregando biblioteca musical</strong>
+                    <p>Buscando arquivos e metadados salvos no Firestore.</p>
+                  </div>
+                ) : filteredSongs.length > 0 ? (
                   <div className="home-song-list" role="list">
                     {filteredSongs.map((song) => (
-                      <button key={song.id} type="button" className="home-song-row" onClick={() => openSongDetail(song.id)}>
+                      <article
+                        key={song.id}
+                        className="home-song-row"
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => openSongDetail(song.id)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter" || event.key === " ") {
+                            event.preventDefault();
+                            openSongDetail(song.id);
+                          }
+                        }}
+                      >
                         <div className="home-song-row-icon">
                           <GiMusicalScore size={22} />
                         </div>
@@ -1971,24 +2557,32 @@ export function HomePage({
                           <div className="home-song-row-meta">
                             <span>{song.category}</span>
                             <span>{song.tone ? `Tom ${song.tone}` : "Tom livre"}</span>
-                            <span>{song.sourceLabel}</span>
+                            <span>{song.voiceAssets.length} voz(es)</span>
+                            <span>{song.lyricFile ? "Letra anexada" : "Sem letra"}</span>
+                            <span>{song.scoreFile ? "Partitura pronta" : "Sem partitura"}</span>
                           </div>
                         </div>
 
                         <div className="home-song-row-actions" onClick={(event) => event.stopPropagation()}>
-                          <a className="home-secondary-action compact" href={song.sourceUrl} target="_blank" rel="noreferrer">
-                            <FiExternalLink size={15} />
-                            Abrir letra
-                          </a>
+                          {canRemoveManagedContent ? (
+                            <button
+                              type="button"
+                              className="home-secondary-action compact danger"
+                              onClick={() => void removeSong(song)}
+                            >
+                              <FiTrash2 size={15} />
+                              Remover
+                            </button>
+                          ) : null}
                         </div>
-                      </button>
+                      </article>
                     ))}
                   </div>
                 ) : (
                   <div className="home-song-library-empty">
                     <GiMusicalNotes size={34} />
                     <strong>Biblioteca pronta para receber músicas</strong>
-                    <p>Use o botão + para cadastrar links de cifra, letra ou referência externa e deixar o repertório acessível para todo o vocal neste aparelho.</p>
+                    <p>Use o botão + para enviar áudios por voz, letra em PDF/imagem, partitura opcional e organizar o repertório completo do vocal.</p>
                   </div>
                 )}
               </article>
@@ -2154,6 +2748,19 @@ export function HomePage({
                       <span>Lançado por {event.author}</span>
                     </div>
 
+                    {canRemoveManagedContent ? (
+                      <div className="home-detail-danger-row">
+                        <button
+                          type="button"
+                          className="home-secondary-action compact danger"
+                          onClick={() => void removeAgendaEvent(event.id, event.title)}
+                        >
+                          <FiTrash2 size={15} />
+                          Remover compromisso
+                        </button>
+                      </div>
+                    ) : null}
+
                     <p>{event.note}</p>
 
                     <div className="home-comment-list">
@@ -2203,7 +2810,7 @@ export function HomePage({
               <h2>{activePost.title}</h2>
               <p>{activePost.content}</p>
 
-              {activePost.imageUrl ? (
+              {activePost.mediaItems.length > 0 ? renderPostMediaGallery(activePost.mediaItems, activePost.title, true) : activePost.imageUrl ? (
                 <div className="home-feed-media home-post-detail-media">
                   <img src={activePost.imageUrl} alt={activePost.title} />
                 </div>
@@ -2215,14 +2822,26 @@ export function HomePage({
               </div>
 
               <div className="home-post-detail-actions">
-                <button
-                  type="button"
-                  className={`home-post-like-btn${activePost.likedByUids.includes(currentUid) ? " is-active" : ""}`}
-                  onClick={() => void togglePostLikeAction(activePost.id)}
-                >
-                  {activePost.likedByUids.includes(currentUid) ? <FaHeart size={18} /> : <FiHeart size={18} />}
-                  <span>{activePost.likedByUids.length} curtida(s)</span>
-                </button>
+                <div className="home-post-inline-actions">
+                  <button
+                    type="button"
+                    className={`home-post-like-btn${activePost.likedByUids.includes(currentUid) ? " is-active" : ""}`}
+                    onClick={() => void togglePostLikeAction(activePost.id)}
+                  >
+                    {activePost.likedByUids.includes(currentUid) ? <FaHeart size={18} /> : <FiHeart size={18} />}
+                    <span>{activePost.likedByUids.length} curtida(s)</span>
+                  </button>
+                  {canRemoveManagedContent ? (
+                    <button
+                      type="button"
+                      className="home-secondary-action danger"
+                      onClick={() => void removeHomePost(activePost)}
+                    >
+                      <FiTrash2 size={15} />
+                      Remover publicação
+                    </button>
+                  ) : null}
+                </div>
                 <div className="home-post-stats">
                   <span><FiMessageCircle size={15} /> {activePost.comments.length} comentário(s)</span>
                 </div>
@@ -2254,29 +2873,9 @@ export function HomePage({
         ) : null}
       </div>
 
-      <AvatarEditorModal
-        open={showComposerImageEditor}
-        imageSrc={composerImageEditorSource}
-        title="Ajuste a imagem da publicação"
-        description="Corte, aproxime, gire e ajuste a imagem antes de publicar no mural."
-        eyebrowLabel="Imagem do mural"
-        cropShape="rect"
-        aspect={4 / 3}
-        onClose={() => {
-          setShowComposerImageEditor(false);
-          setComposerImageEditorSource("");
-        }}
-        onApply={async (dataUrl) => {
-          setComposerDraft((current) => ({ ...current, imageUrl: dataUrl }));
-          setShowComposerImageEditor(false);
-          setComposerImageEditorSource("");
-          setComposerImageStatus("");
-        }}
-      />
-
       {showComposer ? (
         <div className="home-modal-backdrop" role="presentation" onClick={closeComposer}>
-          <div className="home-modal-card" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
+          <div className="home-modal-card home-modal-card-scrollable" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
             <div className="home-modal-header">
               <div>
                 <p className="home-card-eyebrow">Criação rápida</p>
@@ -2287,84 +2886,197 @@ export function HomePage({
               </button>
             </div>
 
-            {composerMode === "home" ? (
-              <div className="home-modal-form">
-                <div className="home-pill-row">
-                  {(["Aviso", "Informação", "Imagem"] as const).map((option) => (
-                    <button key={option} type="button" className={`home-pill-btn${composerDraft.category === option ? " is-active" : ""}`} onClick={() => setComposerDraft((current) => ({ ...current, category: option }))}>
-                      {option}
-                    </button>
-                  ))}
-                </div>
-                <input name="title" value={composerDraft.title} onChange={handleComposerFieldChange} placeholder="Título da publicação" />
-                <textarea name="content" value={composerDraft.content} onChange={handleComposerFieldChange} placeholder="Escreva o aviso, a informação ou instrução para o vocal" rows={5} />
-                <p className="home-inline-status">A data da publicação é registrada automaticamente no momento em que ela é enviada.</p>
-                <select name="expirationDays" value={composerDraft.expirationDays} onChange={handleComposerFieldChange}>
-                  <option value="0">Sem expiração automática</option>
-                  <option value="7">Expirar em 7 dias</option>
-                  <option value="21">Expirar em 21 dias</option>
-                  <option value="30">Expirar em 30 dias</option>
-                </select>
-                <input name="imageUrl" value={composerDraft.imageUrl} onChange={handleComposerFieldChange} placeholder="URL de imagem opcional" />
-                <div className="home-composer-image-tools">
-                  <label className="home-secondary-action compact home-inline-label-btn" htmlFor="home-composer-image-upload">
-                    Carregar imagem
-                  </label>
-                  <input id="home-composer-image-upload" type="file" accept="image/*" hidden onChange={handleComposerImageChange} />
-                  {composerDraft.imageUrl ? (
-                    <button
-                      type="button"
-                      className="home-secondary-action compact"
-                      onClick={() => {
-                        setComposerDraft((current) => ({ ...current, imageUrl: "" }));
-                        setComposerImageStatus("");
-                      }}
-                    >
-                      Remover imagem
-                    </button>
-                  ) : null}
-                </div>
-                {composerDraft.imageUrl ? (
-                  <div className="home-feed-media home-composer-image-preview">
-                    <img src={composerDraft.imageUrl} alt="Prévia da imagem da publicação" />
+            <div className="home-modal-body">
+              {composerMode === "home" ? (
+                <div className="home-modal-form">
+                  <div className="home-pill-row">
+                    {(["Aviso", "Informação", "Imagem"] as const).map((option) => (
+                      <button key={option} type="button" className={`home-pill-btn${composerDraft.category === option ? " is-active" : ""}`} onClick={() => setComposerDraft((current) => ({ ...current, category: option }))}>
+                        {option}
+                      </button>
+                    ))}
                   </div>
-                ) : null}
-                {composerImageStatus ? <p className="home-inline-status">{composerImageStatus}</p> : null}
-              </div>
-            ) : composerMode === "song" ? (
-              <div className="home-modal-form">
-                <div className="home-pill-row">
-                  {(["Culto", "Ensaio", "Especial"] as const).map((option) => (
-                    <button key={option} type="button" className={`home-pill-btn${composerDraft.songCategory === option ? " is-active" : ""}`} onClick={() => setComposerDraft((current) => ({ ...current, songCategory: option }))}>
-                      {option}
-                    </button>
-                  ))}
-                </div>
-                <input name="title" value={composerDraft.title} onChange={handleComposerFieldChange} placeholder="Nome da música" />
-                <input name="artist" value={composerDraft.artist} onChange={handleComposerFieldChange} placeholder="Artista ou ministério" />
-                <input name="tone" value={composerDraft.tone} onChange={handleComposerFieldChange} placeholder="Tom principal ou referência" />
-                <input name="sourceUrl" value={composerDraft.sourceUrl} onChange={handleComposerFieldChange} placeholder="Link da cifra, letra ou referência externa (opcional)" />
-                <textarea name="content" value={composerDraft.content} onChange={handleComposerFieldChange} placeholder="Observações do maestro, estrutura, intro, modulação ou notas para a equipe" rows={5} />
-                <p className="home-inline-status">Se você não informar um link, o app abre uma busca automática no CifraClub com o nome da música.</p>
-              </div>
-            ) : (
-              <div className="home-modal-form">
-                <div className="home-pill-row">
-                  {(["Ensaio", "Saída", "Culto"] as const).map((option) => (
-                    <button key={option} type="button" className={`home-pill-btn${composerDraft.kind === option ? " is-active" : ""}`} onClick={() => setComposerDraft((current) => ({ ...current, kind: option }))}>
-                      {option}
-                    </button>
-                  ))}
-                </div>
-                <input name="title" value={composerDraft.title} onChange={handleComposerFieldChange} placeholder="Título do compromisso" />
-                <textarea name="content" value={composerDraft.content} onChange={handleComposerFieldChange} placeholder="Detalhes, observações e instruções para a equipe" rows={5} />
-                <input name="date" type="date" value={composerDraft.date} onChange={handleComposerFieldChange} />
-                <input name="time" type="time" value={composerDraft.time} onChange={handleComposerFieldChange} />
-                <input name="location" value={composerDraft.location} onChange={handleComposerFieldChange} placeholder="Local do ensaio, saída ou culto" />
-              </div>
-            )}
+                  <input name="title" value={composerDraft.title} onChange={handleComposerFieldChange} placeholder="Título da publicação" />
+                  <textarea name="content" value={composerDraft.content} onChange={handleComposerFieldChange} placeholder="Escreva o aviso, a informação ou instrução para o vocal" rows={5} />
+                  <p className="home-inline-status">A data da publicação é registrada automaticamente no momento em que ela é enviada.</p>
+                  <select name="expirationDays" value={composerDraft.expirationDays} onChange={handleComposerFieldChange}>
+                    <option value="0">Sem expiração automática</option>
+                    <option value="7">Expirar em 7 dias</option>
+                    <option value="21">Expirar em 21 dias</option>
+                    <option value="30">Expirar em 30 dias</option>
+                  </select>
+                  <div className="home-upload-panel">
+                    <div className="home-upload-toolbar">
+                      <label className="home-secondary-action compact home-inline-label-btn" htmlFor="home-composer-media-upload">
+                        <FiUpload size={15} />
+                        Enviar imagens ou vídeos
+                      </label>
+                      <input id="home-composer-media-upload" type="file" accept="image/*,video/*" multiple hidden onChange={handlePostMediaFilesChange} />
+                      {postMediaPreviews.length > 0 ? (
+                        <button type="button" className="home-secondary-action compact" onClick={clearPostMediaSelection}>
+                          Limpar mídia
+                        </button>
+                      ) : null}
+                    </div>
 
-            <div className="home-modal-actions">
+                    {postMediaPreviews.length > 0 ? (
+                      <div className="home-composer-media-grid">
+                        {postMediaPreviews.map((preview) => (
+                          <article key={preview.id} className="home-composer-media-card">
+                            <div className={`home-composer-media-shell${preview.kind === "video" ? " is-video" : ""}`}>
+                              {preview.kind === "video" ? <video src={preview.previewUrl} muted playsInline /> : <img src={preview.previewUrl} alt={preview.name} />}
+                            </div>
+                            <strong>{preview.name}</strong>
+                            <small>{formatStorageBytes(preview.sizeBytes)}</small>
+                          </article>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="home-inline-status">Sem mídia selecionada. Você pode publicar só texto ou combinar com imagens e vídeos.</p>
+                    )}
+                  </div>
+                </div>
+              ) : composerMode === "song" ? (
+                <div className="home-modal-form">
+                  <div className="home-pill-row">
+                    {(["Clássicos", "Culto", "Ensaio", "Especial", "Outra"] as const).map((option) => (
+                      <button key={option} type="button" className={`home-pill-btn${composerDraft.songCategory === option ? " is-active" : ""}`} onClick={() => setComposerDraft((current) => ({ ...current, songCategory: option }))}>
+                        {option}
+                      </button>
+                    ))}
+                  </div>
+                  {composerDraft.songCategory === "Outra" ? (
+                    <input name="customSongCategory" value={composerDraft.customSongCategory} onChange={handleComposerFieldChange} placeholder="Digite a categoria personalizada" />
+                  ) : null}
+                  <input name="title" value={composerDraft.title} onChange={handleComposerFieldChange} placeholder="Nome da música" />
+                  <input name="artist" value={composerDraft.artist} onChange={handleComposerFieldChange} placeholder="Artista ou ministério" />
+                  <input name="tone" value={composerDraft.tone} onChange={handleComposerFieldChange} placeholder="Tom principal ou referência" />
+                  <input name="sourceUrl" value={composerDraft.sourceUrl} onChange={handleComposerFieldChange} placeholder="Link externo de apoio (opcional)" />
+                  <textarea name="content" value={composerDraft.content} onChange={handleComposerFieldChange} placeholder="Observações do maestro, estrutura, intro, modulação ou notas para a equipe" rows={5} />
+                  <section className="home-upload-panel">
+                    <div className="home-upload-section-header">
+                      <strong>Áudio por voz</strong>
+                      <p>Envie um arquivo para cada naipe e, se quiser, uma faixa geral. No celular, o seletor pode usar o app Arquivos ou o provedor que o sistema disponibilizar.</p>
+                    </div>
+                    <p className="home-upload-provider-note">Compatível com arquivos locais e provedores do sistema disponíveis no seletor do aparelho.</p>
+                    {songPickerDebug ? <p className="home-inline-status">{songPickerDebug}</p> : null}
+                    <div className="home-voice-upload-grid">
+                      {SONG_VOICE_PARTS.map((voiceType) => {
+                        const inputId = `song-voice-${normalizeComparableText(voiceType).replace(/[^a-z0-9]+/g, "-")}`;
+                        const selectedFile = songVoiceFiles[voiceType];
+
+                        return (
+                          <article key={voiceType} className="home-upload-field-card">
+                            <div>
+                              <strong>{voiceType}</strong>
+                              <small>{selectedFile ? `${selectedFile.name} • ${formatStorageBytes(selectedFile.size)}` : "Nenhum áudio enviado."}</small>
+                            </div>
+                            <div className="home-upload-field-actions">
+                              <button type="button" className="home-secondary-action compact home-inline-label-btn" onClick={() => openSongVoiceLocalPicker(voiceType)}>
+                                <FiUpload size={15} />
+                                Arquivo
+                              </button>
+                              <input
+                                id={inputId}
+                                ref={(element) => {
+                                  songVoiceInputRefs.current[voiceType] = element;
+                                }}
+                                className="hidden-input"
+                                type="file"
+                                accept="audio/*,.mp3,.wav,.m4a,.aac,.ogg,.oga,.opus,.flac,.weba,.mp4,.mpeg,.mpga,.3gp,.caf,.aif,.aiff,.amr"
+                                onChange={(event) => handleSongVoiceFileChange(voiceType, event)}
+                              />
+                              {selectedFile ? (
+                                <button type="button" className="home-secondary-action compact" onClick={() => setSongVoiceFiles((current) => ({ ...current, [voiceType]: null }))}>
+                                  Remover
+                                </button>
+                              ) : null}
+                            </div>
+                          </article>
+                        );
+                      })}
+                    </div>
+                  </section>
+
+                  <section className="home-upload-panel">
+                    <div className="home-upload-section-header">
+                      <strong>Letra e partitura</strong>
+                      <p>Letra em PDF ou imagem. A partitura é opcional e também pode ser PDF ou imagem escolhidas pelo seletor nativo do aparelho.</p>
+                    </div>
+                    <div className="home-document-upload-grid">
+                      <article className="home-upload-field-card">
+                        <div>
+                          <strong>Letra da música</strong>
+                          <small>{songLyricFile ? `${songLyricFile.name} • ${formatStorageBytes(songLyricFile.size)}` : "Nenhuma letra enviada."}</small>
+                        </div>
+                        <div className="home-upload-field-actions">
+                          <button type="button" className="home-secondary-action compact home-inline-label-btn" onClick={() => openSongAttachmentLocalPicker("lyrics")}>
+                            <FiUpload size={15} />
+                            Arquivo
+                          </button>
+                          <input
+                            id="song-lyrics-upload"
+                            ref={songLyricsInputRef}
+                            className="hidden-input"
+                            type="file"
+                            accept="application/pdf,image/*,.pdf,.png,.jpg,.jpeg,.webp,.gif,.bmp,.heic,.heif"
+                            onChange={(event) => handleSongAttachmentChange("lyrics", event)}
+                          />
+                          {songLyricFile ? (
+                            <button type="button" className="home-secondary-action compact" onClick={() => setSongLyricFile(null)}>
+                              Remover
+                            </button>
+                          ) : null}
+                        </div>
+                      </article>
+
+                      <article className="home-upload-field-card">
+                        <div>
+                          <strong>Partitura opcional</strong>
+                          <small>{songScoreFile ? `${songScoreFile.name} • ${formatStorageBytes(songScoreFile.size)}` : "Nenhuma partitura enviada."}</small>
+                        </div>
+                        <div className="home-upload-field-actions">
+                          <button type="button" className="home-secondary-action compact home-inline-label-btn" onClick={() => openSongAttachmentLocalPicker("score")}>
+                            <FiUpload size={15} />
+                            Arquivo
+                          </button>
+                          <input
+                            id="song-score-upload"
+                            ref={songScoreInputRef}
+                            className="hidden-input"
+                            type="file"
+                            accept="application/pdf,image/*,.pdf,.png,.jpg,.jpeg,.webp,.gif,.bmp,.heic,.heif"
+                            onChange={(event) => handleSongAttachmentChange("score", event)}
+                          />
+                          {songScoreFile ? (
+                            <button type="button" className="home-secondary-action compact" onClick={() => setSongScoreFile(null)}>
+                              Remover
+                            </button>
+                          ) : null}
+                        </div>
+                      </article>
+                    </div>
+                  </section>
+                </div>
+              ) : (
+                <div className="home-modal-form">
+                  <div className="home-pill-row">
+                    {(["Ensaio", "Saída", "Culto"] as const).map((option) => (
+                      <button key={option} type="button" className={`home-pill-btn${composerDraft.kind === option ? " is-active" : ""}`} onClick={() => setComposerDraft((current) => ({ ...current, kind: option }))}>
+                        {option}
+                      </button>
+                    ))}
+                  </div>
+                  <input name="title" value={composerDraft.title} onChange={handleComposerFieldChange} placeholder="Título do compromisso" />
+                  <textarea name="content" value={composerDraft.content} onChange={handleComposerFieldChange} placeholder="Detalhes, observações e instruções para a equipe" rows={5} />
+                  <input name="date" type="date" value={composerDraft.date} onChange={handleComposerFieldChange} />
+                  <input name="time" type="time" value={composerDraft.time} onChange={handleComposerFieldChange} />
+                  <input name="location" value={composerDraft.location} onChange={handleComposerFieldChange} placeholder="Local do ensaio, saída ou culto" />
+                </div>
+              )}
+            </div>
+
+            <div className="home-modal-actions home-modal-footer">
               <button type="button" className="home-secondary-action" onClick={closeComposer}>
                 Cancelar
               </button>
@@ -2377,42 +3089,207 @@ export function HomePage({
       ) : null}
 
       {activeSong ? (
-        <div className="home-modal-backdrop" role="presentation" onClick={closeSongDetail}>
-          <div className="home-modal-card home-song-detail-modal" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
-            <div className="home-modal-header">
+        <section className="home-post-screen home-song-screen" role="dialog" aria-modal="true">
+          <div className="home-post-screen-header">
+            <button type="button" className="home-secondary-action compact" onClick={closeSongDetail}>
+              <FiArrowLeft size={16} />
+              Voltar à biblioteca
+            </button>
+            <span className="home-role-chip">Ensaiador interno</span>
+          </div>
+
+          <article className="home-post-detail-card home-song-screen-card">
+            <div className="home-song-screen-hero">
               <div>
                 <p className="home-card-eyebrow">Biblioteca do vocal</p>
-                <h3>{activeSong.title}</h3>
+                <h2>{activeSong.title}</h2>
+                <p>
+                  Escolha a faixa do seu timbre, acompanhe a letra e visualize a partitura sem sair do app.
+                </p>
               </div>
-              <button type="button" className="home-modal-close" onClick={closeSongDetail}>
-                Fechar
-              </button>
-            </div>
 
-            <div className="home-song-detail-copy">
               <div className="home-song-detail-meta">
                 <span>{activeSong.category}</span>
                 <span>{activeSong.artist || "Artista não informado"}</span>
                 <span>{activeSong.tone ? `Tom ${activeSong.tone}` : "Tom livre"}</span>
-                <span>{activeSong.sourceLabel}</span>
+                <span>{activeSong.voiceAssets.length} faixa(s)</span>
               </div>
 
-              <p>{activeSong.notes || "Sem observações extras. Use o link abaixo para abrir a cifra ou a letra da música."}</p>
+              {activeSong.notes ? <p className="home-song-screen-note">{activeSong.notes}</p> : null}
+            </div>
 
-              <div className="home-song-detail-actions">
-                <a className="home-primary-action" href={activeSong.sourceUrl} target="_blank" rel="noreferrer">
-                  <FiExternalLink size={16} />
-                  Abrir cifra / letra
-                </a>
-                <button type="button" className="home-secondary-action" onClick={closeSongDetail}>
-                  Voltar à biblioteca
+            <div className="home-song-screen-grid">
+              <div className="home-song-screen-main">
+                <section className="home-song-panel">
+                  <div className="home-song-panel-header">
+                    <div>
+                      <strong>{canViewAllSongTracks ? "Faixas disponíveis" : currentVoicePart ? `Faixas para ${currentVoicePart}` : "Faixa geral"}</strong>
+                      <p>
+                        {canViewAllSongTracks
+                          ? "Administração, desenvolvedor, maestro e secretário visualizam todas as faixas internas."
+                          : "Membros visualizam a faixa do próprio timbre e a faixa geral, quando ela existir."}
+                      </p>
+                    </div>
+                  </div>
+
+                  {visibleSongVoiceAssets.length > 0 ? (
+                    <div className="home-song-track-list" role="list">
+                      {visibleSongVoiceAssets.map((asset) => (
+                        <button
+                          key={asset.path}
+                          type="button"
+                          className={`home-song-track-chip${selectedSongVoiceAsset?.path === asset.path ? " is-active" : ""}`}
+                          onClick={() => setSelectedSongAssetPath(asset.path)}
+                        >
+                          <strong>{asset.voiceType}</strong>
+                          <small>{formatStorageBytes(asset.sizeBytes)}</small>
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="home-song-detail-empty">
+                      {currentVoicePart
+                        ? "Ainda não existe faixa enviada para o seu timbre nem uma faixa geral nesta música."
+                        : "Ainda não existe faixa geral disponível para esta música."}
+                    </p>
+                  )}
+
+                  <SongAudioPlayer
+                    sourceUrl={selectedSongVoiceUrl}
+                    title={activeSong.title}
+                    subtitle={selectedSongVoiceAsset ? `${selectedSongVoiceAsset.voiceType} • ${formatStorageBytes(selectedSongVoiceAsset.sizeBytes)}` : "Nenhuma faixa selecionada"}
+                    emptyMessage="Esta música ainda não tem faixa disponível para reprodução interna."
+                  />
+                </section>
+              </div>
+
+              <div className="home-song-screen-side">
+                <section className="home-song-panel">
+                  <div className="home-song-panel-header">
+                    <div>
+                      <strong>Material de apoio</strong>
+                      <p>Letra e partitura ficam disponíveis para leitura interna, sem abrir novas abas.</p>
+                    </div>
+                  </div>
+
+                  <div className="home-song-document-tabs">
+                    <button
+                      type="button"
+                      className={`home-pill-btn${selectedSongDocumentKind === "lyrics" ? " is-active" : ""}`}
+                      onClick={() => setSelectedSongDocumentKind("lyrics")}
+                      disabled={!availableSongDocuments.lyrics}
+                    >
+                      Letra
+                    </button>
+                    <button
+                      type="button"
+                      className={`home-pill-btn${selectedSongDocumentKind === "score" ? " is-active" : ""}`}
+                      onClick={() => setSelectedSongDocumentKind("score")}
+                      disabled={!availableSongDocuments.score}
+                    >
+                      Partitura
+                    </button>
+                  </div>
+
+                  <div className="home-song-document-preview-header">
+                    <strong>Prévia interna</strong>
+                    {selectedSongDocumentUrl ? (
+                      <button
+                        type="button"
+                        className="home-secondary-action compact"
+                        onClick={() => setIsSongDocumentExpanded(true)}
+                      >
+                        <FiEye size={15} />
+                        Expandir
+                      </button>
+                    ) : null}
+                  </div>
+
+                  <div className="home-song-document-preview">
+                    <SongDocumentViewer
+                      fileUrl={selectedSongDocumentUrl}
+                      contentType={selectedSongDocument?.contentType || ""}
+                      title={selectedSongDocumentKind === "lyrics" ? "Letra" : "Partitura"}
+                      fileName={selectedSongDocument?.name || ""}
+                      displayMode="preview"
+                      emptyMessage={
+                        selectedSongDocumentKind === "lyrics"
+                          ? "Nenhuma letra foi anexada para esta música."
+                          : "Nenhuma partitura foi anexada para esta música."
+                      }
+                    />
+                  </div>
+                  {selectedSongDocumentUrl ? <p className="home-song-document-hint">A prévia continua visível aqui; use o botão Expandir quando quiser abrir em tela cheia.</p> : null}
+
+                  <p className="home-song-detail-footnote">
+                    Conteúdo liberado apenas para leitura e reprodução dentro do app. Adicionada por {activeSong.addedBy}.
+                  </p>
+                  {activeSong.referenceUrl ? <p className="home-song-reference-note">Existe uma referência externa cadastrada para esta música, mas a experiência principal foi mantida aqui dentro.</p> : null}
+                  {canRemoveManagedContent ? (
+                    <button type="button" className="home-secondary-action danger" onClick={() => void removeSong(activeSong)}>
+                      <FiTrash2 size={15} />
+                      Remover música
+                    </button>
+                  ) : null}
+                </section>
+              </div>
+            </div>
+          </article>
+        </section>
+      ) : null}
+
+      {activeSong && isSongDocumentExpanded && selectedSongDocumentUrl ? (
+        <section className="home-post-screen home-song-document-screen" role="dialog" aria-modal="true">
+          <div className="home-post-screen-header">
+            <button type="button" className="home-secondary-action compact" onClick={() => setIsSongDocumentExpanded(false)}>
+              <FiArrowLeft size={16} />
+              Voltar à música
+            </button>
+            <span className="home-role-chip">{selectedSongDocumentKind === "lyrics" ? "Letra expandida" : "Partitura expandida"}</span>
+          </div>
+
+          <article className="home-post-detail-card home-song-document-expanded-card">
+            <div className="home-song-screen-hero">
+              <div>
+                <p className="home-card-eyebrow">Visualização ampliada</p>
+                <h2>{selectedSongDocumentKind === "lyrics" ? `Letra • ${activeSong.title}` : `Partitura • ${activeSong.title}`}</h2>
+                <p>Use esta tela para acompanhar melhor durante o ensaio e volte quando quiser.</p>
+              </div>
+
+              <div className="home-song-document-tabs">
+                <button
+                  type="button"
+                  className={`home-pill-btn${selectedSongDocumentKind === "lyrics" ? " is-active" : ""}`}
+                  onClick={() => setSelectedSongDocumentKind("lyrics")}
+                  disabled={!availableSongDocuments.lyrics}
+                >
+                  Letra
+                </button>
+                <button
+                  type="button"
+                  className={`home-pill-btn${selectedSongDocumentKind === "score" ? " is-active" : ""}`}
+                  onClick={() => setSelectedSongDocumentKind("score")}
+                  disabled={!availableSongDocuments.score}
+                >
+                  Partitura
                 </button>
               </div>
-
-              <p className="home-song-detail-footnote">Adicionada por {activeSong.addedBy}.</p>
             </div>
-          </div>
-        </div>
+
+            <SongDocumentViewer
+              fileUrl={selectedSongDocumentUrl}
+              contentType={selectedSongDocument?.contentType || ""}
+              title={selectedSongDocumentKind === "lyrics" ? "Letra" : "Partitura"}
+              fileName={selectedSongDocument?.name || ""}
+              displayMode="expanded"
+              emptyMessage={
+                selectedSongDocumentKind === "lyrics"
+                  ? "Nenhuma letra foi anexada para esta música."
+                  : "Nenhuma partitura foi anexada para esta música."
+              }
+            />
+          </article>
+        </section>
       ) : null}
 
       {showHelpModal ? (

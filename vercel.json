@@ -5,6 +5,14 @@
   "outputDirectory": "dist",
   "rewrites": [
     {
+      "source": "/api/(.*)",
+      "destination": "/api/$1"
+    },
+    {
+      "source": "/__/auth/(.*)",
+      "destination": "https://vocalsalvosporcristo-70e5f.firebaseapp.com/__/auth/$1"
+    },
+    {
       "source": "/(.*)",
       "destination": "/index.html"
     }

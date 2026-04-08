@@ -20,6 +20,7 @@ type LoginPageProps = {
   onErrorsChange: Dispatch<SetStateAction<FormErrors>>;
   onLogin: () => Promise<void> | void;
   onGoogleLogin: () => Promise<void> | void;
+  onOpenForgotPassword: () => void;
   onOpenRegister: () => void;
   isSubmitting?: boolean;
   statusMessage?: string;
@@ -32,6 +33,7 @@ export function LoginPage({
   onErrorsChange,
   onLogin,
   onGoogleLogin,
+  onOpenForgotPassword,
   onOpenRegister,
   isSubmitting = false,
   statusMessage = "",
@@ -116,6 +118,17 @@ export function LoginPage({
               <p className="login-field-error">{errors.loginPassword}</p>
             ) : null}
           </label>
+
+          <div className="login-inline-actions">
+            <button
+              type="button"
+              className="login-forgot-link"
+              onClick={onOpenForgotPassword}
+              disabled={isSubmitting}
+            >
+              Esqueci minha senha
+            </button>
+          </div>
 
           <div className="login-actions">
             <button type="submit" className="login-submit-btn" disabled={isSubmitting}>

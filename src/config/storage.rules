@@ -1,0 +1,151 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function currentMember() {
+      return firestore.get(/databases/(default)/documents/members/$(request.auth.uid));
+    }
+
+    function isAdmin() {
+      return signedIn() && currentMember().data.accountLevel == 'administration';
+    }
+
+    function isDeveloper() {
+      return signedIn() && currentMember().data.leadershipRole == 'Desenvolvedor';
+    }
+
+    function isDirectionLeader() {
+      return signedIn() && (
+        currentMember().data.leadershipRole == 'Maestro' ||
+        currentMember().data.leadershipRole == 'Secretário' ||
+        currentMember().data.leadershipRole == 'Vice-Secretário'
+      );
+    }
+
+    function canDeleteManagedMedia() {
+      return isAdmin() || (
+        signedIn() && (
+          currentMember().data.leadershipRole == 'Maestro' ||
+          currentMember().data.leadershipRole == 'Secretário'
+        )
+      );
+    }
+
+    function hasPermission(permission) {
+      return signedIn() &&
+        currentMember().data.permissions is list &&
+        currentMember().data.permissions.hasAny([permission]);
+    }
+
+    function canManagePostMedia() {
+      return isAdmin() ||
+        isDirectionLeader() ||
+        hasPermission('Postar avisos') ||
+        hasPermission('Mexer na agenda');
+    }
+
+    function canManageSongMedia() {
+      return isAdmin() ||
+        isDeveloper() ||
+        isDirectionLeader() ||
+        hasPermission('Adicionar músicas');
+    }
+
+    function canViewAllSongMedia() {
+      return isAdmin() ||
+        isDeveloper() ||
+        (
+          signedIn() && (
+            currentMember().data.leadershipRole == 'Maestro' ||
+            currentMember().data.leadershipRole == 'Secretário'
+          )
+        );
+    }
+
+    function isImageUpload() {
+      return request.resource != null &&
+        request.resource.contentType.matches('image/.*');
+    }
+
+    function isVideoUpload() {
+      return request.resource != null &&
+        request.resource.contentType.matches('video/.*');
+    }
+
+    function isAudioUpload() {
+      return request.resource != null &&
+        request.resource.contentType.matches('audio/.*');
+    }
+
+    function isPdfOrImageUpload() {
+      return request.resource != null && (
+        request.resource.contentType == 'application/pdf' ||
+        request.resource.contentType.matches('image/.*')
+      );
+    }
+
+    function voiceFolderMatchesMember(voiceType) {
+      return voiceType == 'geral' || (
+        voiceType == 'soprano' && currentMember().data.vocalRange == 'Soprano'
+      ) || (
+        voiceType == 'mezzo-soprano' && (
+          currentMember().data.vocalRange == 'Mezzo-soprano' ||
+          currentMember().data.vocalRange == 'Mezzo Soprano'
+        )
+      ) || (
+        voiceType == 'contralto' && currentMember().data.vocalRange == 'Contralto'
+      ) || (
+        voiceType == 'tenor' && currentMember().data.vocalRange == 'Tenor'
+      ) || (
+        voiceType == 'baritono' && (
+          currentMember().data.vocalRange == 'Barítono' ||
+          currentMember().data.vocalRange == 'Baritono'
+        )
+      ) || (
+        voiceType == 'baixo' && currentMember().data.vocalRange == 'Baixo'
+      );
+    }
+
+    match /avatars/{userId}/{fileName} {
+      allow read: if signedIn();
+      allow create, update: if signedIn() &&
+        request.auth.uid == userId &&
+        isImageUpload() &&
+        request.resource.size <= 5 * 1024 * 1024;
+      allow delete: if signedIn() && request.auth.uid == userId;
+    }
+
+    match /posts/{postId}/{fileName} {
+      allow read: if signedIn();
+      allow create, update: if canManagePostMedia() && (
+        (isImageUpload() && request.resource.size <= 15 * 1024 * 1024) ||
+        (isVideoUpload() && request.resource.size <= 150 * 1024 * 1024)
+      );
+      allow delete: if canDeleteManagedMedia();
+    }
+
+    match /songs/{songId}/voices/{voiceType}/{fileName} {
+      allow read: if canViewAllSongMedia() || (signedIn() && voiceFolderMatchesMember(voiceType));
+      allow create, update: if canManageSongMedia() &&
+        isAudioUpload() &&
+        request.resource.size <= 80 * 1024 * 1024;
+      allow delete: if canDeleteManagedMedia();
+    }
+
+    match /songs/{songId}/{attachmentType}/{fileName} {
+      allow read: if signedIn() && attachmentType in ['lyrics', 'score'];
+      allow create, update: if canManageSongMedia() &&
+        attachmentType in ['lyrics', 'score'] &&
+        isPdfOrImageUpload() &&
+        request.resource.size <= 25 * 1024 * 1024;
+      allow delete: if canDeleteManagedMedia();
+    }
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

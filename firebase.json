@@ -2,6 +2,9 @@
   "firestore": {
     "rules": "src/config/firestore.rules"
   },
+  "storage": {
+    "rules": "src/config/storage.rules"
+  },
   "database": {
     "rules": "src/config/realtimedatabase.rules"
   }

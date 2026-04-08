@@ -1,10 +1,13 @@
 import { startTransition, useEffect, useState } from "react";
 import {
   createUserWithEmailAndPassword,
+  getRedirectResult,
   GoogleAuthProvider,
   onAuthStateChanged,
-  signInWithPopup,
+  sendPasswordResetEmail,
   signInWithEmailAndPassword,
+  signInWithPopup,
+  signInWithRedirect,
   signOut,
   updatePassword,
 } from "firebase/auth";
@@ -34,6 +37,7 @@ import { readImageFileAsDataUrl } from "../utils/avatarEditor";
 import { AvatarEditorModal } from "../components/AvatarEditorModal";
 import { AdminAccessPage } from "./AdminAccessPage";
 import { AdminDashboardPage } from "./AdminDashboardPage";
+import { ForgotPasswordPage } from "./ForgotPasswordPage";
 import { HomePage } from "./HomePage";
 import { LoginPage } from "./LoginPage";
 import { RegisterPage } from "./RegisterPage";
@@ -54,17 +58,48 @@ function resolveAuthErrorMessage(errorCode: string) {
       return "E-mail ou senha inválidos.";
     case "auth/weak-password":
       return "A senha precisa ter pelo menos 6 caracteres.";
+    case "auth/missing-email":
+      return "Informe o e-mail cadastrado para recuperar a senha.";
     case "auth/network-request-failed":
       return "Falha de conexão. Verifique sua internet e tente novamente.";
+    case "auth/too-many-requests":
+      return "Muitas tentativas em sequência. Aguarde um pouco e tente novamente.";
     case "auth/popup-closed-by-user":
       return "O login com Google foi fechado antes da conclusão.";
     case "auth/cancelled-popup-request":
       return "Já existe uma janela de login aberta. Conclua ou feche a anterior.";
     case "auth/account-exists-with-different-credential":
       return "Esse e-mail já está vinculado a outro método de acesso.";
+    case "auth/popup-blocked":
+      return "O navegador bloqueou a janela do Google. Tente novamente ou continue pelo redirecionamento.";
+    case "auth/operation-not-supported-in-this-environment":
+      return "Esse navegador não conseguiu abrir o login do Google neste formato. Tente novamente.";
+    case "auth/unauthorized-domain":
+      return "Este domínio ainda não está autorizado no Firebase para login com Google.";
     default:
       return "Não foi possível concluir a autenticação agora.";
   }
+}
+
+function shouldUseGoogleRedirect() {
+  if (typeof window === "undefined") {
+    return false;
+  }
+
+  const userAgent = window.navigator.userAgent.toLowerCase();
+  const isMobileUserAgent = /android|iphone|ipad|ipod|mobile/.test(userAgent);
+  const hasCoarsePointer = window.matchMedia?.("(pointer: coarse)").matches ?? false;
+
+  return isMobileUserAgent || hasCoarsePointer;
+}
+
+function shouldFallbackToGoogleRedirect(errorCode: string) {
+  return [
+    "auth/popup-blocked",
+    "auth/popup-closed-by-user",
+    "auth/cancelled-popup-request",
+    "auth/operation-not-supported-in-this-environment",
+  ].includes(errorCode);
 }
 
 function formatPhoneNumber(value: string) {
@@ -97,6 +132,37 @@ function resolveAdminAuthPassword(password: string) {
   return password === ADMIN_BOOTSTRAP_ALIAS_PASSWORD
     ? ADMIN_BOOTSTRAP_AUTH_PASSWORD
     : password;
+}
+
+function isPrivateDevelopmentHost(hostname: string) {
+  if (["localhost", "127.0.0.1", "0.0.0.0"].includes(hostname)) {
+    return true;
+  }
+
+  if (/^192\.168\./.test(hostname)) {
+    return true;
+  }
+
+  if (/^10\./.test(hostname)) {
+    return true;
+  }
+
+  const privateRange172 = hostname.match(/^172\.(\d{1,3})\./);
+
+  if (!privateRange172) {
+    return false;
+  }
+
+  const subnet = Number(privateRange172[1]);
+  return subnet >= 16 && subnet <= 31;
+}
+
+function canUseLocalPasswordResetFallback() {
+  if (typeof window === "undefined") {
+    return false;
+  }
+
+  return isPrivateDevelopmentHost(window.location.hostname);
 }
 
 export default function PagesIndex() {
@@ -269,6 +335,41 @@ export default function PagesIndex() {
     };
   }, [isAdminRoute]);
 
+  useEffect(() => {
+    let isMounted = true;
+
+    void getRedirectResult(firebaseAuth)
+      .then((result) => {
+        if (!isMounted || !result?.user) {
+          return;
+        }
+
+        setForm((current) => ({
+          ...current,
+          loginPassword: "",
+        }));
+        setAuthStatusMessage("");
+        setErrors({});
+      })
+      .catch((error) => {
+        if (!isMounted) {
+          return;
+        }
+
+        const code = error instanceof Error && "code" in error ? String(error.code) : "";
+        setAuthStatusMessage(resolveAuthErrorMessage(code));
+      })
+      .finally(() => {
+        if (isMounted) {
+          setAuthSubmitting(false);
+        }
+      });
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
   const handleFieldChange = (
     event: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>,
   ) => {
@@ -313,6 +414,14 @@ export default function PagesIndex() {
     startTransition(() => {
       setCurrentPage("register");
       setRegisterStep(0);
+      setAuthStatusMessage("");
+      setErrors({});
+    });
+  };
+
+  const openForgotPasswordPage = () => {
+    startTransition(() => {
+      setCurrentPage("forgotPassword");
       setAuthStatusMessage("");
       setErrors({});
     });
@@ -407,6 +516,11 @@ export default function PagesIndex() {
     setErrors({});
 
     try {
+      if (shouldUseGoogleRedirect()) {
+        await signInWithRedirect(firebaseAuth, provider);
+        return;
+      }
+
       await signInWithPopup(firebaseAuth, provider);
       setForm((current) => ({
         ...current,
@@ -414,7 +528,120 @@ export default function PagesIndex() {
       }));
     } catch (error) {
       const code = error instanceof Error && "code" in error ? String(error.code) : "";
+
+      if (shouldFallbackToGoogleRedirect(code)) {
+        try {
+          await signInWithRedirect(firebaseAuth, provider);
+          return;
+        } catch (redirectError) {
+          const redirectCode =
+            redirectError instanceof Error && "code" in redirectError
+              ? String(redirectError.code)
+              : "";
+
+          setAuthStatusMessage(resolveAuthErrorMessage(redirectCode));
+          return;
+        }
+      }
+
       setAuthStatusMessage(resolveAuthErrorMessage(code));
+    } finally {
+      setAuthSubmitting(false);
+    }
+  };
+
+  const handleForgotPassword = async () => {
+    const email = form.loginEmail.trim().toLowerCase();
+
+    if (!email) {
+      setErrors((current) => ({
+        ...current,
+        loginEmail: "Informe o e-mail cadastrado para receber a redefinição.",
+      }));
+      return;
+    }
+
+    if (!email.includes("@")) {
+      setErrors((current) => ({
+        ...current,
+        loginEmail: "Use um e-mail válido para recuperar a senha.",
+      }));
+      return;
+    }
+
+    setAuthSubmitting(true);
+    setAuthStatusMessage("");
+    setErrors((current) => ({
+      ...current,
+      loginEmail: "",
+      loginPassword: "",
+    }));
+
+    try {
+      const response = await fetch("/api/auth/password-reset", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ email }),
+      });
+
+      const payload = (await response.json().catch(() => null)) as
+        | { message?: string; field?: string }
+        | null;
+
+      if (!response.ok) {
+        if (payload?.field === "loginEmail") {
+          setErrors((current) => ({
+            ...current,
+            loginEmail: payload.message || "Não foi possível validar o e-mail informado.",
+          }));
+        } else {
+          setAuthStatusMessage(
+            payload?.message || "Não foi possível enviar o e-mail de redefinição agora.",
+          );
+        }
+
+        return;
+      }
+
+      setAuthStatusMessage(
+        payload?.message ||
+          "Se o e-mail estiver cadastrado, enviaremos um link de redefinição em instantes.",
+      );
+    } catch (error) {
+      if (canUseLocalPasswordResetFallback()) {
+        try {
+          firebaseAuth.languageCode = "pt-BR";
+          await sendPasswordResetEmail(firebaseAuth, email);
+          setAuthStatusMessage(
+            `Ambiente local detectado. Enviamos o e-mail padrão do Firebase para ${email}. O template customizado funciona no deploy com a API ativa.`,
+          );
+          return;
+        } catch (fallbackError) {
+          const code =
+            fallbackError instanceof Error && "code" in fallbackError
+              ? String(fallbackError.code)
+              : "";
+
+          if (
+            code === "auth/invalid-email" ||
+            code === "auth/user-not-found" ||
+            code === "auth/missing-email"
+          ) {
+            setErrors((current) => ({
+              ...current,
+              loginEmail: resolveAuthErrorMessage(code),
+            }));
+          } else {
+            setAuthStatusMessage(resolveAuthErrorMessage(code));
+          }
+
+          return;
+        }
+      }
+
+      setAuthStatusMessage("Não foi possível enviar o e-mail de redefinição agora.");
     } finally {
       setAuthSubmitting(false);
     }
@@ -671,6 +898,19 @@ export default function PagesIndex() {
         googleProfileMode={Boolean(profileCompletionMode && isGoogleUser())}
       />
     );
+  } else if (currentPage === "forgotPassword") {
+    content = (
+      <ForgotPasswordPage
+        form={form}
+        errors={errors}
+        onFieldChange={handleFieldChange}
+        onErrorsChange={setErrors}
+        onSubmit={handleForgotPassword}
+        onBackToLogin={openLoginPage}
+        isSubmitting={authSubmitting}
+        statusMessage={authStatusMessage}
+      />
+    );
   } else {
     content = (
       <LoginPage
@@ -680,6 +920,7 @@ export default function PagesIndex() {
         onErrorsChange={setErrors}
         onLogin={handleLogin}
         onGoogleLogin={handleGoogleLogin}
+        onOpenForgotPassword={openForgotPasswordPage}
         onOpenRegister={openRegisterPage}
         isSubmitting={authSubmitting}
         statusMessage={authStatusMessage}

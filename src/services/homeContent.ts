@@ -2,6 +2,7 @@ import {
   arrayRemove,
   arrayUnion,
   collection,
+  deleteDoc,
   doc,
   getDocs,
   serverTimestamp,
@@ -9,6 +10,17 @@ import {
   updateDoc,
 } from "firebase/firestore";
 import { firestoreDb } from "../config/firebase";
+
+export type HomePostMediaKind = "image" | "video";
+
+export type HomePostMediaRecord = {
+  name: string;
+  url: string;
+  path: string;
+  contentType: string;
+  sizeBytes: number;
+  kind: HomePostMediaKind;
+};
 
 export type HomeCommentRecord = {
   id: string;
@@ -42,6 +54,7 @@ export type HomePostRecord = {
   author: string;
   role: string;
   imageUrl: string;
+  mediaItems?: HomePostMediaRecord[];
   expirationDays: number;
   createdByUid: string;
   likedByUids: string[];
@@ -62,12 +75,14 @@ export type CreateAgendaEventInput = {
 };
 
 export type CreateHomePostInput = {
+  id?: string;
   category: string;
   title: string;
   content: string;
   author: string;
   role: string;
   imageUrl: string;
+  mediaItems?: HomePostMediaRecord[];
   expirationDays: number;
   createdByUid: string;
 };
@@ -143,7 +158,7 @@ export async function createAgendaEvent(input: CreateAgendaEventInput) {
 }
 
 export async function createHomePost(input: CreateHomePostInput) {
-  const postReference = doc(getHomePostsCollection());
+  const postReference = input.id ? doc(getHomePostsCollection(), input.id) : doc(getHomePostsCollection());
   const payload: HomePostRecord = {
     id: postReference.id,
     category: input.category,
@@ -152,6 +167,7 @@ export async function createHomePost(input: CreateHomePostInput) {
     author: input.author,
     role: input.role,
     imageUrl: input.imageUrl,
+    mediaItems: input.mediaItems || [],
     expirationDays: input.expirationDays,
     createdByUid: input.createdByUid,
     likedByUids: [],
@@ -190,4 +206,12 @@ export async function toggleHomePostLike(postId: string, userUid: string, should
     likedByUids: shouldLike ? arrayUnion(userUid) : arrayRemove(userUid),
     updatedAt: serverTimestamp(),
   });
+}
+
+export async function deleteAgendaEvent(eventId: string) {
+  await deleteDoc(doc(firestoreDb, "agendaEvents", eventId));
+}
+
+export async function deleteHomePost(postId: string) {
+  await deleteDoc(doc(firestoreDb, "homePosts", postId));
 }
