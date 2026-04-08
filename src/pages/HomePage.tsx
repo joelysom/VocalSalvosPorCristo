@@ -86,6 +86,7 @@ type HomePageProps = {
 
 type HomeTab = "home" | "agenda" | "songs" | "members";
 type ComposerMode = "home" | "agenda" | "song";
+type ProfileScreen = "details" | "photo" | "editor";
 
 type CommentEntry = HomeCommentRecord;
 
@@ -823,7 +824,7 @@ export function HomePage({
   const [showLogoutModal, setShowLogoutModal] = useState(false);
   const [showHelpModal, setShowHelpModal] = useState(false);
   const [showNotificationsModal, setShowNotificationsModal] = useState(false);
-  const [showProfileModal, setShowProfileModal] = useState(false);
+  const [activeProfileScreen, setActiveProfileScreen] = useState<ProfileScreen | null>(null);
   const [showMemberDetailModal, setShowMemberDetailModal] = useState(false);
   const [showHomeFeedHeader, setShowHomeFeedHeader] = useState(true);
   const [showAgendaPanel, setShowAgendaPanel] = useState(true);
@@ -866,7 +867,6 @@ export function HomePage({
   const [profileAvatarPreview, setProfileAvatarPreview] = useState("");
   const [profileAvatarDataUrl, setProfileAvatarDataUrl] = useState<string | null>(null);
   const [profileAvatarEditorSource, setProfileAvatarEditorSource] = useState("");
-  const [showProfileAvatarEditor, setShowProfileAvatarEditor] = useState(false);
   const [profileSaving, setProfileSaving] = useState(false);
   const [profileStatus, setProfileStatus] = useState("");
   const [agendaLoading, setAgendaLoading] = useState(false);
@@ -884,6 +884,7 @@ export function HomePage({
   const songVoiceInputRefs = useRef<Partial<Record<SongVoicePart, HTMLInputElement | null>>>({});
   const songLyricsInputRef = useRef<HTMLInputElement | null>(null);
   const songScoreInputRef = useRef<HTMLInputElement | null>(null);
+  const profileAvatarInputRef = useRef<HTMLInputElement | null>(null);
 
   const deferredQuery = useDeferredValue(query.trim().toLowerCase());
   const currentUser = firebaseAuth.currentUser;
@@ -957,7 +958,6 @@ export function HomePage({
         setProfileAvatarPreview(profileResult?.avatarDataUrl || currentUser?.photoURL || "");
         setProfileAvatarDataUrl(null);
         setProfileAvatarEditorSource("");
-        setShowProfileAvatarEditor(false);
 
         if (agendaResult.status === "fulfilled") {
           setAgendaEvents(agendaResult.value);
@@ -1131,6 +1131,7 @@ export function HomePage({
   const currentVoicePart = normalizeVoiceType(resolvedVocalRange);
   const nextEvent = filteredAgendaEvents[0] ?? agendaEvents[0];
   const profileAvatar = profileAvatarPreview || currentUser?.photoURL || profile?.avatarDataUrl || "";
+  const hasPendingProfileAvatar = Boolean(profileAvatarDataUrl);
   const sharedStorageUsedBytes = useMemo(
     () =>
       posts.reduce(
@@ -1184,12 +1185,11 @@ export function HomePage({
   const hasOverlayModalOpen =
     showComposer ||
     Boolean(activeSong) ||
+    Boolean(activeProfileScreen) ||
     showHelpModal ||
-    showProfileModal ||
     showMemberDetailModal ||
     showNotificationsModal ||
-    showLogoutModal ||
-    showProfileAvatarEditor;
+    showLogoutModal;
   const notificationItems = useMemo<AgendaNotificationItem[]>(
     () =>
       unreadAgendaItems.map((event) => ({
@@ -1426,6 +1426,7 @@ export function HomePage({
   const openAgendaNotificationItem = (item: AgendaNotificationItem) => {
     setShowNotificationsModal(false);
     markAgendaNotificationsAsSeen();
+    setActiveProfileScreen(null);
     setActivePostId("");
     setActiveTab("agenda");
     setAgendaMonthKey(item.scheduledDate.slice(0, 7));
@@ -1433,6 +1434,7 @@ export function HomePage({
   };
 
   const openTab = (tab: HomeTab) => {
+    setActiveProfileScreen(null);
     setActiveTab(tab);
     setActivePostId("");
     setActiveAgendaDate("");
@@ -1450,6 +1452,7 @@ export function HomePage({
   };
 
   const openPostDetail = (postId: string) => {
+    setActiveProfileScreen(null);
     setActivePostId(postId);
   };
 
@@ -1458,6 +1461,7 @@ export function HomePage({
   };
 
   const openSongDetail = (songId: string) => {
+    setActiveProfileScreen(null);
     setActivePostId("");
     setActiveAgendaDate("");
     setIsSongDocumentExpanded(false);
@@ -1469,7 +1473,48 @@ export function HomePage({
     setActiveSongId("");
   };
 
+  const openProfilePage = () => {
+    setProfileStatus("");
+    setActiveProfileScreen("details");
+  };
+
+  const openProfilePhotoPage = () => {
+    setProfileStatus("");
+    setActiveProfileScreen("photo");
+  };
+
+  const closeProfileFlow = () => {
+    setActiveProfileScreen(null);
+    setProfileAvatarEditorSource("");
+  };
+
+  const openProfileAvatarPicker = () => {
+    setProfileStatus("");
+    profileAvatarInputRef.current?.click();
+  };
+
+  const reopenProfileAvatarEditor = () => {
+    const source = profileAvatarDataUrl || profileAvatarPreview || currentUser?.photoURL || profile?.avatarDataUrl || "";
+
+    if (!source) {
+      setProfileStatus("Escolha uma imagem para ajustar a sua foto.");
+      return;
+    }
+
+    setProfileStatus("");
+    setProfileAvatarEditorSource(source);
+    setActiveProfileScreen("editor");
+  };
+
+  const discardPendingProfileAvatar = () => {
+    setProfileAvatarPreview(profile?.avatarDataUrl || currentUser?.photoURL || "");
+    setProfileAvatarDataUrl(null);
+    setProfileAvatarEditorSource("");
+    setProfileStatus("Alteração da foto descartada.");
+  };
+
   const openComposer = () => {
+    setActiveProfileScreen(null);
     if (activeTab === "songs" && canManageSongs) {
       setComposerMode("song");
     } else if (activeTab === "agenda" && canManageAgenda) {
@@ -1893,8 +1938,9 @@ export function HomePage({
   const openProfileAvatarEditor = async (file: File) => {
     const imageDataUrl = await readImageFileAsDataUrl(file);
 
+    setProfileStatus("");
     setProfileAvatarEditorSource(imageDataUrl);
-    setShowProfileAvatarEditor(true);
+    setActiveProfileScreen("editor");
   };
 
   const handleProfileAvatarChange = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -1935,7 +1981,7 @@ export function HomePage({
       setProfileAvatarPreview(updatedProfile.avatarDataUrl || "");
       setProfileAvatarDataUrl(null);
       setProfileAvatarEditorSource("");
-      setShowProfileAvatarEditor(false);
+      setActiveProfileScreen((current) => (current === "photo" || current === "editor" ? "details" : current));
       setDirectoryMembers(sortDirectoryMembers(directoryResult.members));
       setDirectoryStatus(directoryResult.statusMessage);
       setProfileStatus("Perfil atualizado com sucesso.");
@@ -2095,7 +2141,7 @@ export function HomePage({
                 className="home-profile-trigger"
                 type="button"
                 aria-label="Abrir perfil do usuário"
-                onClick={() => setShowProfileModal(true)}
+                onClick={openProfilePage}
               >
                 {profileAvatar ? <img src={profileAvatar} alt={resolvedName} /> : <span>{getInitials(resolvedName)}</span>}
               </button>
@@ -2664,14 +2710,14 @@ export function HomePage({
         </main>
 
         {(activeTab === "songs" ? canManageSongs : activeTab === "agenda" ? canManageAgenda : canPost) ? (
-          !activePost && !activeAgendaDate && !activeSong ? (
+          !activePost && !activeAgendaDate && !activeSong && !activeProfileScreen ? (
           <button className="home-fab-action" type="button" aria-label={activeTab === "agenda" ? "Criar evento" : activeTab === "songs" ? "Adicionar música" : "Criar publicação"} onClick={openComposer}>
             <FiPlus size={24} />
           </button>
           ) : null
         ) : null}
 
-        {!activePost && !activeAgendaDate && !activeSong ? <nav className="home-bottom-nav" aria-label="Navegação principal">
+        {!activePost && !activeAgendaDate && !activeSong && !activeProfileScreen ? <nav className="home-bottom-nav" aria-label="Navegação principal">
           <button className={`nav-icon-btn${activeTab === "home" ? " is-active" : ""}`} type="button" aria-label="Home" onClick={() => openTab("home")}>
             <FiHome size={22} />
             <span>Home</span>
@@ -2693,23 +2739,241 @@ export function HomePage({
           </button>
         </nav> : null}
 
+        <input
+          ref={profileAvatarInputRef}
+          className="hidden-input"
+          type="file"
+          accept="image/*"
+          onChange={handleProfileAvatarChange}
+        />
+
         <AvatarEditorModal
-          open={showProfileAvatarEditor}
+          open={activeProfileScreen === "editor"}
+          layout="page"
+          backLabel="Voltar para a foto"
           imageSrc={profileAvatarEditorSource}
           title="Ajuste sua foto de perfil"
           description="Corte, aproxime, afaste e ajuste a aparência antes de atualizar o seu perfil."
           onClose={() => {
-            setShowProfileAvatarEditor(false);
+            setActiveProfileScreen("photo");
             setProfileAvatarEditorSource("");
           }}
           onApply={async (dataUrl) => {
             setProfileAvatarPreview(dataUrl);
             setProfileAvatarDataUrl(dataUrl);
-            setShowProfileAvatarEditor(false);
+            setActiveProfileScreen("photo");
             setProfileAvatarEditorSource("");
-            setProfileStatus("");
+            setProfileStatus("Nova foto pronta. Salve o perfil para publicar a alteração.");
           }}
         />
+
+        {activeProfileScreen === "details" ? (
+          <section className="home-post-screen home-profile-screen" role="dialog" aria-modal="true">
+            <div className="home-post-screen-header">
+              <button type="button" className="home-secondary-action compact" onClick={closeProfileFlow}>
+                <FiArrowLeft size={16} />
+                Voltar ao painel
+              </button>
+              <span className="home-role-chip">Meu perfil</span>
+            </div>
+
+            <article className="home-post-detail-card home-profile-screen-card">
+              <div className="home-profile-screen-hero">
+                <div>
+                  <p className="home-card-eyebrow">Central de perfil</p>
+                  <h2>{resolvedName}</h2>
+                  <p>Organizamos cadastro, foto e edição fina em etapas separadas para deixar tudo mais claro no celular e no desktop.</p>
+                </div>
+
+                <button type="button" className="home-profile-hero-avatar" onClick={openProfilePhotoPage} aria-label="Abrir gestão da foto de perfil">
+                  {profileAvatar ? <img src={profileAvatar} alt={resolvedName} /> : <span>{getInitials(resolvedName)}</span>}
+                  <span className="home-profile-hero-avatar-badge">{hasPendingProfileAvatar ? "Nova foto pronta" : "Gerenciar foto"}</span>
+                </button>
+              </div>
+
+              <section className="home-profile-page-grid">
+                <article className="home-profile-card home-profile-summary-card home-profile-summary-card-page">
+                  <div className="home-card-topline compact">
+                    <span>Visão geral</span>
+                    <strong>{roleLabel}</strong>
+                  </div>
+
+                  <p>Atualize seus dados com mais foco e deixe a foto em uma área separada, com edição própria para enquadramento.</p>
+
+                  <div className="home-chip-row">
+                    {resolvedVocalRange ? <span className="home-chip">Timbre {resolvedVocalRange}</span> : null}
+                    <span className="home-chip">{roleLabel}</span>
+                    {hasPendingProfileAvatar ? <span className="home-chip">Foto pendente de salvar</span> : null}
+                  </div>
+
+                  <div className="home-profile-page-actions">
+                    <button type="button" className="home-secondary-action" onClick={openProfilePhotoPage}>
+                      <FiCamera size={16} />
+                      Gerenciar foto
+                    </button>
+                    <button type="button" className="home-secondary-action" onClick={() => setShowLogoutModal(true)}>
+                      <HiOutlineArrowRightOnRectangle size={16} />
+                      Sair
+                    </button>
+                  </div>
+
+                  {profileStatus ? <p className="home-inline-status">{profileStatus}</p> : null}
+                </article>
+
+                <article className="home-profile-card home-profile-edit-card home-profile-edit-page-card">
+                  <div className="home-card-topline compact">
+                    <span>Dados editáveis</span>
+                    <strong>{canManageExtendedProfile ? "Edição ampliada" : "Edição básica"}</strong>
+                  </div>
+
+                  {!canManageExtendedProfile ? (
+                    <p className="home-profile-note">Nome, estado civil, gênero e timbre são ajustados apenas por administração e secretaria.</p>
+                  ) : null}
+
+                  <div className="home-profile-form-grid">
+                    <label>
+                      <span>Nome</span>
+                      <input name="name" value={profileDraft.name} onChange={handleProfileFieldChange} disabled={!canManageExtendedProfile || profileSaving} />
+                    </label>
+                    <label>
+                      <span>Telefone</span>
+                      <input name="phone" value={profileDraft.phone} onChange={handleProfileFieldChange} disabled={profileSaving} />
+                    </label>
+                    <label>
+                      <span>CEP</span>
+                      <input name="cep" value={profileDraft.cep} onChange={handleProfileFieldChange} disabled={profileSaving} />
+                    </label>
+                    <label>
+                      <span>Bairro</span>
+                      <input name="neighborhood" value={profileDraft.neighborhood} onChange={handleProfileFieldChange} disabled={profileSaving} />
+                    </label>
+                    <label>
+                      <span>Cidade</span>
+                      <input name="city" value={profileDraft.city} onChange={handleProfileFieldChange} disabled={profileSaving} />
+                    </label>
+                    <label>
+                      <span>Rua</span>
+                      <input name="street" value={profileDraft.street} onChange={handleProfileFieldChange} disabled={profileSaving} />
+                    </label>
+                    <label>
+                      <span>Número</span>
+                      <input name="houseNumber" value={profileDraft.houseNumber} onChange={handleProfileFieldChange} disabled={profileSaving} />
+                    </label>
+                    <label>
+                      <span>Disponibilidade</span>
+                      <input name="availability" value={profileDraft.availability} onChange={handleProfileFieldChange} disabled={profileSaving} />
+                    </label>
+                    <label>
+                      <span>Estado civil</span>
+                      <input name="maritalStatus" value={profileDraft.maritalStatus} onChange={handleProfileFieldChange} disabled={!canManageExtendedProfile || profileSaving} />
+                    </label>
+                    <label>
+                      <span>Gênero</span>
+                      <input name="gender" value={profileDraft.gender} onChange={handleProfileFieldChange} disabled={!canManageExtendedProfile || profileSaving} />
+                    </label>
+                    <label className="home-profile-form-span">
+                      <span>Timbre</span>
+                      <input name="vocalRange" value={profileDraft.vocalRange} onChange={handleProfileFieldChange} disabled={!canManageExtendedProfile || profileSaving} />
+                    </label>
+                  </div>
+
+                  <div className="home-profile-footer">
+                    <button type="button" className="home-primary-action" onClick={() => void saveProfile()} disabled={profileSaving}>
+                      {profileSaving ? "Salvando..." : "Salvar alterações"}
+                    </button>
+                  </div>
+                </article>
+              </section>
+            </article>
+          </section>
+        ) : null}
+
+        {activeProfileScreen === "photo" ? (
+          <section className="home-post-screen home-profile-screen" role="dialog" aria-modal="true">
+            <div className="home-post-screen-header">
+              <button type="button" className="home-secondary-action compact" onClick={() => setActiveProfileScreen("details")}>
+                <FiArrowLeft size={16} />
+                Voltar ao perfil
+              </button>
+              <span className="home-role-chip">Foto do perfil</span>
+            </div>
+
+            <article className="home-post-detail-card home-profile-photo-card">
+              <div className="home-profile-photo-hero">
+                <div>
+                  <p className="home-card-eyebrow">Foto do perfil</p>
+                  <h2>Imagem, enquadramento e publicação</h2>
+                  <p>Escolha uma foto, entre no editor para posicionar melhor o rosto e só depois confirme a alteração no seu perfil.</p>
+                </div>
+
+                <div className="home-chip-row">
+                  <span className="home-chip">{hasPendingProfileAvatar ? "Prévia pronta" : "Foto atual"}</span>
+                </div>
+              </div>
+
+              <section className="home-profile-photo-grid">
+                <article className="home-profile-photo-preview-card">
+                  <div className="home-profile-photo-preview">
+                    {profileAvatar ? <img src={profileAvatar} alt={resolvedName} /> : <span>{getInitials(resolvedName)}</span>}
+                  </div>
+                  <strong>{hasPendingProfileAvatar ? "Prévia pronta para salvar" : "Foto em uso no momento"}</strong>
+                  <p>{hasPendingProfileAvatar ? "Sua nova foto já foi ajustada. Salve para publicar no perfil e no diretório interno." : "Escolha uma imagem para abrir o editor e montar a versão final da sua foto."}</p>
+                </article>
+
+                <article className="home-profile-photo-actions-card">
+                  <div className="home-profile-photo-step-list">
+                    <div className="home-profile-photo-step">
+                      <span>1</span>
+                      <div>
+                        <strong>Escolha uma imagem</strong>
+                        <p>Abra a galeria ou os arquivos do aparelho para selecionar a foto base.</p>
+                      </div>
+                    </div>
+
+                    <div className="home-profile-photo-step">
+                      <span>2</span>
+                      <div>
+                        <strong>Ajuste no editor</strong>
+                        <p>Posicione, aproxime, gire e refine a imagem em uma tela exclusiva.</p>
+                      </div>
+                    </div>
+
+                    <div className="home-profile-photo-step">
+                      <span>3</span>
+                      <div>
+                        <strong>Publique no perfil</strong>
+                        <p>Depois do ajuste final, salve a alteração para atualizar o perfil e o diretório.</p>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="home-profile-page-actions">
+                    <button type="button" className="home-primary-action" onClick={openProfileAvatarPicker} disabled={profileSaving}>
+                      <FiCamera size={16} />
+                      Escolher imagem
+                    </button>
+                    <button type="button" className="home-secondary-action" onClick={reopenProfileAvatarEditor} disabled={!profileAvatar || profileSaving}>
+                      <FiEye size={16} />
+                      Reabrir editor
+                    </button>
+                    <button type="button" className="home-secondary-action" onClick={() => void saveProfile()} disabled={!hasPendingProfileAvatar || profileSaving}>
+                      <FiUpload size={16} />
+                      {profileSaving ? "Salvando..." : "Salvar foto"}
+                    </button>
+                    <button type="button" className="home-secondary-action danger" onClick={discardPendingProfileAvatar} disabled={!hasPendingProfileAvatar || profileSaving}>
+                      <FiX size={16} />
+                      Descartar nova foto
+                    </button>
+                  </div>
+
+                  {profileStatus ? <p className="home-inline-status">{profileStatus}</p> : null}
+                </article>
+              </section>
+
+              <p className="home-profile-photo-note">Dica: use uma imagem nítida, com o rosto centralizado e fundo simples. Isso melhora leitura visual no diretório e no topo do app.</p>
+            </article>
+          </section>
+        ) : null}
 
         {activeAgendaDate ? (
           <section className="home-post-screen home-agenda-screen" role="dialog" aria-modal="true">
@@ -3310,126 +3574,6 @@ export function HomePage({
               <p>Na Agenda você acompanha ensaios, saídas e horários com espaço para justificar ausência.</p>
               <p>No ícone do perfil você atualiza seus dados. Na aba Membros você encontra os contatos internos liberados para o ministério.</p>
             </div>
-          </div>
-        </div>
-      ) : null}
-
-      {showProfileModal ? (
-        <div className="home-modal-backdrop" role="presentation" onClick={() => setShowProfileModal(false)}>
-          <div className="home-modal-card home-profile-modal-card" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
-            <div className="home-modal-header">
-              <div>
-                <p className="home-card-eyebrow">Meu perfil</p>
-                <h3>Editar cadastro</h3>
-              </div>
-              <button type="button" className="home-modal-close" onClick={() => setShowProfileModal(false)}>
-                Fechar
-              </button>
-            </div>
-
-            <section className="home-profile-panel">
-              <article className="home-profile-card home-profile-summary-card">
-                <div className="home-profile-summary">
-                  <label className="home-profile-avatar-editor" htmlFor="profile-avatar-input">
-                    {profileAvatar ? <img src={profileAvatar} alt={resolvedName} /> : <span>{getInitials(resolvedName)}</span>}
-                    <span className="home-profile-avatar-badge">
-                      <FiCamera size={14} />
-                    </span>
-                  </label>
-
-                  <div className="home-profile-summary-copy">
-                    <div className="home-card-topline compact">
-                      <span>Meu perfil</span>
-                      <strong>{roleLabel}</strong>
-                    </div>
-                    <h3>{resolvedName}</h3>
-                    <p>Atualize foto, telefone, endereço e dados essenciais do seu cadastro.</p>
-                    <div className="home-chip-row">
-                      {resolvedVocalRange ? <span className="home-chip">Timbre {resolvedVocalRange}</span> : null}
-                      <span className="home-chip">{roleLabel}</span>
-                    </div>
-                  </div>
-                </div>
-
-                <input id="profile-avatar-input" className="hidden-input" type="file" accept="image/*" onChange={handleProfileAvatarChange} />
-
-                <div className="home-profile-inline-actions">
-                  <label htmlFor="profile-avatar-input" className="home-secondary-action home-inline-label-btn">
-                    Ajustar foto
-                  </label>
-                  <button type="button" className="home-secondary-action" onClick={() => setShowLogoutModal(true)}>
-                    <HiOutlineArrowRightOnRectangle size={16} />
-                    Sair
-                  </button>
-                </div>
-
-                {profileStatus ? <p className="home-inline-status">{profileStatus}</p> : null}
-              </article>
-
-              <article className="home-profile-card home-profile-edit-card">
-                <div className="home-card-topline compact">
-                  <span>Dados editáveis</span>
-                  <strong>{canManageExtendedProfile ? "Edição ampliada" : "Edição básica"}</strong>
-                </div>
-
-                {!canManageExtendedProfile ? (
-                  <p className="home-profile-note">Nome, estado civil, gênero e timbre são ajustados apenas por administração e secretaria.</p>
-                ) : null}
-
-                <div className="home-profile-form-grid">
-                  <label>
-                    <span>Nome</span>
-                    <input name="name" value={profileDraft.name} onChange={handleProfileFieldChange} disabled={!canManageExtendedProfile || profileSaving} />
-                  </label>
-                  <label>
-                    <span>Telefone</span>
-                    <input name="phone" value={profileDraft.phone} onChange={handleProfileFieldChange} disabled={profileSaving} />
-                  </label>
-                  <label>
-                    <span>CEP</span>
-                    <input name="cep" value={profileDraft.cep} onChange={handleProfileFieldChange} disabled={profileSaving} />
-                  </label>
-                  <label>
-                    <span>Bairro</span>
-                    <input name="neighborhood" value={profileDraft.neighborhood} onChange={handleProfileFieldChange} disabled={profileSaving} />
-                  </label>
-                  <label>
-                    <span>Cidade</span>
-                    <input name="city" value={profileDraft.city} onChange={handleProfileFieldChange} disabled={profileSaving} />
-                  </label>
-                  <label>
-                    <span>Rua</span>
-                    <input name="street" value={profileDraft.street} onChange={handleProfileFieldChange} disabled={profileSaving} />
-                  </label>
-                  <label>
-                    <span>Número</span>
-                    <input name="houseNumber" value={profileDraft.houseNumber} onChange={handleProfileFieldChange} disabled={profileSaving} />
-                  </label>
-                  <label>
-                    <span>Disponibilidade</span>
-                    <input name="availability" value={profileDraft.availability} onChange={handleProfileFieldChange} disabled={profileSaving} />
-                  </label>
-                  <label>
-                    <span>Estado civil</span>
-                    <input name="maritalStatus" value={profileDraft.maritalStatus} onChange={handleProfileFieldChange} disabled={!canManageExtendedProfile || profileSaving} />
-                  </label>
-                  <label>
-                    <span>Gênero</span>
-                    <input name="gender" value={profileDraft.gender} onChange={handleProfileFieldChange} disabled={!canManageExtendedProfile || profileSaving} />
-                  </label>
-                  <label className="home-profile-form-span">
-                    <span>Timbre</span>
-                    <input name="vocalRange" value={profileDraft.vocalRange} onChange={handleProfileFieldChange} disabled={!canManageExtendedProfile || profileSaving} />
-                  </label>
-                </div>
-
-                <div className="home-profile-footer">
-                  <button type="button" className="home-primary-action" onClick={saveProfile} disabled={profileSaving}>
-                    Salvar alterações
-                  </button>
-                </div>
-              </article>
-            </section>
           </div>
         </div>
       ) : null}
