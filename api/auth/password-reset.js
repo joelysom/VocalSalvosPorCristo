@@ -18,6 +18,10 @@ function getRequiredEnv(name) {
   return value;
 }
 
+function getOptionalEnv(name) {
+  return String(process.env[name] || "").trim();
+}
+
 function getFirebaseAdminApp() {
   if (admin.apps.length > 0) {
     return admin.app();
@@ -37,15 +41,30 @@ function getFirebaseAdminApp() {
 }
 
 function getTransporter() {
-  const host = getRequiredEnv("SMTP_HOST");
-  const port = Number(process.env.SMTP_PORT || "465");
   const user = getRequiredEnv("SMTP_USER");
   const pass = getRequiredEnv("SMTP_PASS");
+  const service = getOptionalEnv("SMTP_SERVICE").toLowerCase();
+  const host = getOptionalEnv("SMTP_HOST");
+
+  if (service === "gmail" || (!host && user.toLowerCase().endsWith("@gmail.com"))) {
+    return nodemailer.createTransport({
+      service: "gmail",
+      auth: {
+        user,
+        pass,
+      },
+    });
+  }
+
+  const resolvedHost = host || getRequiredEnv("SMTP_HOST");
+  const port = Number(process.env.SMTP_PORT || "465");
+  const secureSetting = getOptionalEnv("SMTP_SECURE").toLowerCase();
+  const secure = secureSetting ? secureSetting === "true" : port === 465;
 
   return nodemailer.createTransport({
-    host,
+    host: resolvedHost,
     port,
-    secure: port === 465,
+    secure,
     auth: {
       user,
       pass,
@@ -107,6 +126,19 @@ async function createPasswordResetLink(auth, email) {
       code === "auth/unauthorized-continue-uri"
     ) {
       return auth.generatePasswordResetLink(email);
+    }
+
+    throw error;
+  }
+}
+
+async function hasResettableUser(auth, email) {
+  try {
+    await auth.getUserByEmail(email);
+    return true;
+  } catch (error) {
+    if (error?.code === "auth/user-not-found") {
+      return false;
     }
 
     throw error;
@@ -208,13 +240,21 @@ export default async function handler(req, res) {
     getFirebaseAdminApp();
 
     const auth = admin.auth();
+
+    if (!(await hasResettableUser(auth, email))) {
+      res.status(200).json({
+        message: "Se o e-mail estiver cadastrado, enviaremos um link de redefinição em instantes.",
+      });
+      return;
+    }
+
     const transporter = getTransporter();
     const logoBuffer = await readFile(logoPath);
     const resetLink = await createPasswordResetLink(auth, email);
 
     const fromName = process.env.SMTP_FROM_NAME || "Vocal Salvos por Cristo";
-    const fromEmail = getRequiredEnv("SMTP_FROM_EMAIL");
-    const replyTo = process.env.SMTP_REPLY_TO || fromEmail;
+    const fromEmail = getOptionalEnv("SMTP_FROM_EMAIL") || getRequiredEnv("SMTP_USER");
+    const replyTo = getOptionalEnv("SMTP_REPLY_TO") || fromEmail;
 
     await transporter.sendMail({
       from: `"${fromName}" <${fromEmail}>`,

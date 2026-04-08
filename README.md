@@ -62,16 +62,38 @@ Use [.env.example](.env.example) como referência e configure essas variáveis n
 - `VITE_GOOGLE_DRIVE_CLIENT_ID`
 - `VITE_GOOGLE_DRIVE_APP_ID`
 - `APP_BASE_URL` (opcional)
+- `SMTP_SERVICE` (opcional, use `gmail` para Gmail)
 - `FIREBASE_ADMIN_PROJECT_ID`
 - `FIREBASE_ADMIN_CLIENT_EMAIL`
 - `FIREBASE_ADMIN_PRIVATE_KEY`
 - `SMTP_HOST`
 - `SMTP_PORT`
+- `SMTP_SECURE`
 - `SMTP_USER`
 - `SMTP_PASS`
 - `SMTP_FROM_NAME`
 - `SMTP_FROM_EMAIL`
 - `SMTP_REPLY_TO`
+
+### Envio gratuito com Gmail
+
+Se você quiser usar um Gmail como remetente do e-mail personalizado, a API agora aceita isso diretamente.
+
+Configuração recomendada na Vercel:
+
+- `SMTP_SERVICE=gmail`
+- `SMTP_USER=seuemail@gmail.com`
+- `SMTP_PASS=sua_senha_de_app_do_google`
+- `SMTP_FROM_NAME=Vocal Salvos por Cristo`
+- `SMTP_FROM_EMAIL=seuemail@gmail.com`
+- `SMTP_REPLY_TO=seuemail@gmail.com`
+
+Observações importantes para Gmail:
+
+- a senha normal da conta Google geralmente não funciona para SMTP em produção
+- o ideal é ativar verificação em duas etapas na conta e gerar uma Senha de App do Google
+- quando `SMTP_SERVICE=gmail` estiver definida, `SMTP_HOST` e `SMTP_PORT` podem ficar vazios
+- o template do e-mail já continua em português, em HTML, com a imagem `Login_Logo.png` embutida
 
 ### Observações importantes para o reset no deploy
 
