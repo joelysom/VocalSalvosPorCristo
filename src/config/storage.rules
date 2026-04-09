@@ -87,25 +87,44 @@ service firebase.storage {
       );
     }
 
+    function memberMatchesVocalRange(acceptedRanges) {
+      return signedIn() &&
+        currentMember().data.vocalRange is string &&
+        acceptedRanges.hasAny([currentMember().data.vocalRange]);
+    }
+
     function voiceFolderMatchesMember(voiceType) {
       return voiceType == 'geral' || (
-        voiceType == 'soprano' && currentMember().data.vocalRange == 'Soprano'
+        voiceType == 'soprano' &&
+        memberMatchesVocalRange(['Soprano', 'soprano'])
       ) || (
         voiceType == 'mezzo-soprano' && (
-          currentMember().data.vocalRange == 'Mezzo-soprano' ||
-          currentMember().data.vocalRange == 'Mezzo Soprano'
+          memberMatchesVocalRange([
+            'Mezzo-soprano',
+            'Mezzo Soprano',
+            'Mezzo soprano',
+            'mezzo-soprano',
+            'mezzo soprano'
+          ])
         )
       ) || (
-        voiceType == 'contralto' && currentMember().data.vocalRange == 'Contralto'
+        voiceType == 'contralto' &&
+        memberMatchesVocalRange(['Contralto', 'contralto'])
       ) || (
-        voiceType == 'tenor' && currentMember().data.vocalRange == 'Tenor'
+        voiceType == 'tenor' &&
+        memberMatchesVocalRange(['Tenor', 'tenor'])
       ) || (
         voiceType == 'baritono' && (
-          currentMember().data.vocalRange == 'Barítono' ||
-          currentMember().data.vocalRange == 'Baritono'
+          memberMatchesVocalRange([
+            'Barítono',
+            'Baritono',
+            'barítono',
+            'baritono'
+          ])
         )
       ) || (
-        voiceType == 'baixo' && currentMember().data.vocalRange == 'Baixo'
+        voiceType == 'baixo' &&
+        memberMatchesVocalRange(['Baixo', 'baixo'])
       );
     }
 

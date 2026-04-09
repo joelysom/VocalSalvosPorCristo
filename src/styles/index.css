@@ -3521,22 +3521,216 @@ select {
   align-items: center;
 }
 
-.home-member-detail-backdrop {
-  background: rgba(3, 7, 18, 0.72);
-  backdrop-filter: blur(8px);
+.home-member-screen {
+  background:
+    radial-gradient(circle at top left, rgba(34, 48, 87, 0.14), transparent 34%),
+    linear-gradient(180deg, #f8fafc, #edf2f7);
 }
 
-.home-member-detail-modal {
-  max-width: 560px;
-  width: min(92vw, 560px);
+.home-member-screen-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
 }
 
-.home-member-detail-header {
+.home-member-screen-card {
+  display: grid;
+  gap: 20px;
+  padding: 22px;
+}
+
+.home-member-screen-hero {
+  display: grid;
+  gap: 14px;
+}
+
+.home-member-screen-identity {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 16px;
   align-items: center;
 }
 
-.home-member-detail-header p {
-  margin: 0 0 10px;
+.home-member-screen-avatar {
+  flex-shrink: 0;
+}
+
+.home-member-screen-hero h2 {
+  font-family: Montserrat, sans-serif;
+  font-size: 28px;
+  line-height: 1.08;
+  color: #16233d;
+}
+
+.home-member-screen-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  gap: 18px;
+  align-items: start;
+}
+
+.home-member-panel {
+  display: grid;
+  gap: 16px;
+  padding: 18px;
+  border-radius: 24px;
+  border: 1px solid #dce3ee;
+  background: linear-gradient(180deg, #fffffffc, #f7f9fcfa);
+}
+
+.home-member-panel-header {
+  display: grid;
+  gap: 6px;
+}
+
+.home-member-panel-header strong {
+  color: #1f2437;
+  font-size: 15px;
+}
+
+.home-member-panel-header p {
+  margin: 0;
+  color: #5f6678;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.home-member-editor-panel {
+  align-self: stretch;
+}
+
+.home-member-management-card-page {
+  margin-top: 0;
+}
+
+.home-member-management-card {
+  display: grid;
+  gap: 14px;
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px solid #d9dde5;
+  border-radius: 16px;
+  background: #f7f9fc;
+}
+
+.home-member-management-header {
+  display: grid;
+  gap: 10px;
+}
+
+.home-member-management-header strong {
+  color: #223057;
+  font-size: 14px;
+}
+
+.home-member-management-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.home-member-management-field {
+  display: grid;
+  gap: 6px;
+}
+
+.home-member-management-field span {
+  color: #4b5673;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.home-member-management-field input,
+.home-member-management-field select {
+  min-height: 46px;
+  padding: 0 14px;
+  border: 1px solid #d9dde5;
+  border-radius: 12px;
+  background: #fff;
+  color: #223057;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.home-member-management-avatar-block {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 14px;
+  align-items: center;
+}
+
+.home-member-management-avatar-preview {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 88px;
+  height: 88px;
+  overflow: hidden;
+  border-radius: 28px;
+  background: #eef1f6;
+  color: #223057;
+  font-size: 24px;
+  font-weight: 800;
+}
+
+.home-member-management-avatar-preview img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.home-member-management-avatar-copy {
+  display: grid;
+  gap: 4px;
+}
+
+.home-member-management-avatar-copy strong {
+  color: #1f2437;
+  font-size: 14px;
+}
+
+.home-member-management-avatar-copy p {
+  margin: 0;
+  color: #5f6678;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.home-member-management-avatar-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.home-member-management-actions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.home-danger-action.compact {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 42px;
+  padding: 0 14px;
+  border: none;
+  border-radius: 999px;
+  background: #b42318;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.home-member-management-status {
+  margin: 0;
+  color: #4b5673;
+  font-size: 13px;
+  line-height: 1.6;
 }
 
 .home-directory-contact-row {
@@ -4501,6 +4695,9 @@ select {
   .home-profile-photo-hero,
   .home-profile-page-grid,
   .home-profile-photo-grid,
+  .home-member-screen-identity,
+  .home-member-screen-grid,
+  .home-member-management-avatar-block,
   .home-directory-header,
   .home-directory-layout,
   .home-directory-detail-header,
@@ -4512,6 +4709,8 @@ select {
   .home-profile-inline-actions,
   .home-profile-footer,
   .home-profile-page-actions,
+  .home-member-screen-header-actions,
+  .home-member-management-avatar-actions,
   .home-directory-contact-actions {
     flex-direction: column;
     align-items: stretch;

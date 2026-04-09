@@ -1,4 +1,5 @@
 import { startTransition, useEffect, useState } from "react";
+import toast from "react-hot-toast";
 import {
   createUserWithEmailAndPassword,
   getRedirectResult,
@@ -71,7 +72,7 @@ function resolveAuthErrorMessage(errorCode: string) {
     case "auth/account-exists-with-different-credential":
       return "Esse e-mail já está vinculado a outro método de acesso.";
     case "auth/popup-blocked":
-      return "O navegador bloqueou a janela do Google. Tente novamente ou continue pelo redirecionamento.";
+      return "O navegador bloqueou a janela do Google. Tente novamente no navegador padrão do aparelho.";
     case "auth/operation-not-supported-in-this-environment":
       return "Esse navegador não conseguiu abrir o login do Google neste formato. Tente novamente.";
     case "auth/unauthorized-domain":
@@ -81,16 +82,14 @@ function resolveAuthErrorMessage(errorCode: string) {
   }
 }
 
-function shouldUseGoogleRedirect() {
+function canFallbackToGoogleRedirect() {
   if (typeof window === "undefined") {
     return false;
   }
 
-  const userAgent = window.navigator.userAgent.toLowerCase();
-  const isMobileUserAgent = /android|iphone|ipad|ipod|mobile/.test(userAgent);
-  const hasCoarsePointer = window.matchMedia?.("(pointer: coarse)").matches ?? false;
+  const host = window.location.host.toLowerCase();
 
-  return isMobileUserAgent || hasCoarsePointer;
+  return host.endsWith(".firebaseapp.com") || host.endsWith(".web.app");
 }
 
 function shouldFallbackToGoogleRedirect(errorCode: string) {
@@ -449,8 +448,10 @@ export default function PagesIndex() {
       }));
       setRegisterStep(0);
       setErrors({});
+      toast.success("Sessão encerrada.");
     } catch {
       setAuthStatusMessage("Não foi possível encerrar a sessão agora.");
+      toast.error("Não foi possível encerrar a sessão agora.");
     } finally {
       setAuthSubmitting(false);
     }
@@ -472,9 +473,9 @@ export default function PagesIndex() {
     }
 
     void openAvatarEditor(file).catch((error) => {
-      setAuthStatusMessage(
-        error instanceof Error ? error.message : "Não foi possível abrir o editor de foto agora.",
-      );
+      const message = error instanceof Error ? error.message : "Não foi possível abrir o editor de foto agora.";
+      setAuthStatusMessage(message);
+      toast.error(message);
     });
   };
 
@@ -495,6 +496,7 @@ export default function PagesIndex() {
     try {
       await signInWithEmailAndPassword(firebaseAuth, identifier, form.loginPassword);
       setForm((current) => ({ ...current, loginPassword: "" }));
+      toast.success("Login realizado com sucesso.");
     } catch (error) {
       const code = error instanceof Error && "code" in error ? String(error.code) : "";
       const message = resolveAuthErrorMessage(code);
@@ -502,6 +504,7 @@ export default function PagesIndex() {
         ...current,
         loginPassword: message,
       }));
+      toast.error(message);
     } finally {
       setAuthSubmitting(false);
     }
@@ -516,21 +519,18 @@ export default function PagesIndex() {
     setErrors({});
 
     try {
-      if (shouldUseGoogleRedirect()) {
-        await signInWithRedirect(firebaseAuth, provider);
-        return;
-      }
-
       await signInWithPopup(firebaseAuth, provider);
       setForm((current) => ({
         ...current,
         loginPassword: "",
       }));
+      toast.success("Login com Google concluído.");
     } catch (error) {
       const code = error instanceof Error && "code" in error ? String(error.code) : "";
 
-      if (shouldFallbackToGoogleRedirect(code)) {
+      if (shouldFallbackToGoogleRedirect(code) && canFallbackToGoogleRedirect()) {
         try {
+          toast("Abrindo o login do Google no navegador...");
           await signInWithRedirect(firebaseAuth, provider);
           return;
         } catch (redirectError) {
@@ -539,12 +539,16 @@ export default function PagesIndex() {
               ? String(redirectError.code)
               : "";
 
-          setAuthStatusMessage(resolveAuthErrorMessage(redirectCode));
+          const message = resolveAuthErrorMessage(redirectCode);
+          setAuthStatusMessage(message);
+          toast.error(message);
           return;
         }
       }
 
-      setAuthStatusMessage(resolveAuthErrorMessage(code));
+      const message = resolveAuthErrorMessage(code);
+      setAuthStatusMessage(message);
+      toast.error(message);
     } finally {
       setAuthSubmitting(false);
     }
@@ -586,6 +590,7 @@ export default function PagesIndex() {
             ? `Ambiente local detectado. Enviamos o e-mail padrão do Firebase para ${email}. O template customizado funciona no deploy com a API ativa.`
             : `O envio customizado ficou indisponível no momento. Enviamos o e-mail padrão do Firebase para ${email}.`,
         );
+        toast.success(`E-mail de redefinição preparado para ${email}.`);
         return true;
       } catch (fallbackError) {
         const code =
@@ -611,6 +616,7 @@ export default function PagesIndex() {
         setAuthStatusMessage(
           resolveAuthErrorMessage(code) || "Não foi possível enviar o e-mail de redefinição agora.",
         );
+        toast.error(resolveAuthErrorMessage(code) || "Não foi possível enviar o e-mail de redefinição agora.");
         return false;
       }
     };
@@ -655,15 +661,16 @@ export default function PagesIndex() {
         payload?.message ||
           "Se o e-mail estiver cadastrado, enviaremos um link de redefinição em instantes.",
       );
+      toast.success(payload?.message || "Solicitação de redefinição enviada.");
     } catch (error) {
       const fallbackWorked = await sendFirebaseFallbackResetEmail();
 
       if (!fallbackWorked) {
-        setAuthStatusMessage(
-          error instanceof Error && error.message
-            ? error.message
-            : "Não foi possível enviar o e-mail de redefinição agora.",
-        );
+        const message = error instanceof Error && error.message
+          ? error.message
+          : "Não foi possível enviar o e-mail de redefinição agora.";
+        setAuthStatusMessage(message);
+        toast.error(message);
       }
     } finally {
       setAuthSubmitting(false);
@@ -714,6 +721,7 @@ export default function PagesIndex() {
         ...initialFormState,
         loginEmail: profile.email,
       });
+      toast.success(profileCompletionMode ? "Perfil concluído com sucesso." : "Cadastro concluído com sucesso.");
       startTransition(() => {
         setCurrentPage(isAdminRoute && accessLevel === "administration" ? "admin" : "home");
       });
@@ -733,6 +741,7 @@ export default function PagesIndex() {
         }));
       } else {
         setAuthStatusMessage(message);
+        toast.error(message);
       }
     } finally {
       setAuthSubmitting(false);
@@ -765,6 +774,7 @@ export default function PagesIndex() {
       setMemberAccessLevel("administration");
       setMemberPermissions(normalizePermissions(adminProfile.permissions, "administration"));
       await loadManagedMembers();
+      toast.success("Acesso administrativo liberado.");
       startTransition(() => {
         setCurrentPage("admin");
       });
@@ -777,7 +787,9 @@ export default function PagesIndex() {
         (code === "auth/user-not-found" || code === "auth/invalid-credential");
 
       if (!shouldTryBootstrapCreate) {
-        setAuthStatusMessage(resolveAuthErrorMessage(code));
+        const message = resolveAuthErrorMessage(code);
+        setAuthStatusMessage(message);
+        toast.error(message);
         setAuthSubmitting(false);
         return;
       }
@@ -794,6 +806,7 @@ export default function PagesIndex() {
         setMemberPermissions(normalizePermissions(adminProfile.permissions, "administration"));
         await loadManagedMembers();
         setAuthStatusMessage("Conta administrativa inicial criada. Troque a senha assim que entrar.");
+        toast.success("Conta administrativa inicial criada.");
         startTransition(() => {
           setCurrentPage("admin");
         });
@@ -803,8 +816,11 @@ export default function PagesIndex() {
 
         if (createCode === "auth/email-already-in-use") {
           setAuthStatusMessage("A conta administrativa já existe. Use a senha atual definida para esse acesso.");
+          toast.error("A conta administrativa já existe. Use a senha atual definida para esse acesso.");
         } else {
-          setAuthStatusMessage(resolveAuthErrorMessage(createCode));
+          const message = resolveAuthErrorMessage(createCode);
+          setAuthStatusMessage(message);
+          toast.error(message);
         }
       }
     } finally {
@@ -826,8 +842,10 @@ export default function PagesIndex() {
     try {
       await updatePassword(currentUser, nextPassword);
       setAuthStatusMessage("Senha administrativa atualizada com sucesso.");
+      toast.success("Senha administrativa atualizada com sucesso.");
     } catch {
       setAuthStatusMessage("Não foi possível atualizar a senha agora. Faça login novamente e tente outra vez.");
+      toast.error("Não foi possível atualizar a senha agora. Faça login novamente e tente outra vez.");
     } finally {
       setAuthSubmitting(false);
     }
@@ -857,8 +875,10 @@ export default function PagesIndex() {
       await updateManagedMemberProfile(member.uid, member);
       await loadManagedMembers();
       setAuthStatusMessage("Conta atualizada com sucesso.");
+      toast.success("Conta atualizada com sucesso.");
     } catch {
       setAuthStatusMessage("Não foi possível salvar as alterações desse membro.");
+      toast.error("Não foi possível salvar as alterações desse membro.");
     } finally {
       setAuthSubmitting(false);
     }

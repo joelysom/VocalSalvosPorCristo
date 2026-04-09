@@ -47,25 +47,9 @@ function isPrivateNetworkHost(hostname: string) {
   return false;
 }
 
-function resolveFirebaseAuthDomain() {
-  if (typeof window === "undefined") {
-    return baseFirebaseConfig.authDomain;
-  }
-
-  const { hostname, host, protocol } = window.location;
-  const isLocalDevelopmentHost = isPrivateNetworkHost(hostname);
-  const isHttpOrigin = protocol === "http:";
-
-  if (isLocalDevelopmentHost || isHttpOrigin) {
-    return baseFirebaseConfig.authDomain;
-  }
-
-  return host;
-}
-
 const firebaseConfig = {
   ...baseFirebaseConfig,
-  authDomain: resolveFirebaseAuthDomain(),
+  authDomain: baseFirebaseConfig.authDomain,
 };
 
 export const firebaseApp = getApps().length ? getApp() : initializeApp(firebaseConfig);

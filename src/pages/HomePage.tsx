@@ -1,5 +1,6 @@
 import { useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import type * as React from "react";
+import toast from "react-hot-toast";
 import {
   FiArrowLeft,
   FiCamera,
@@ -87,6 +88,7 @@ type HomePageProps = {
 type HomeTab = "home" | "agenda" | "songs" | "members";
 type ComposerMode = "home" | "agenda" | "song";
 type ProfileScreen = "details" | "photo" | "editor";
+type MemberScreen = "details" | "editor" | "avatar-editor";
 
 type CommentEntry = HomeCommentRecord;
 
@@ -200,6 +202,35 @@ const supportedSongDocumentExtensions = [
   ".heic",
   ".heif",
 ];
+const supportedComposerImageExtensions = [
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".webp",
+  ".gif",
+  ".bmp",
+  ".heic",
+  ".heif",
+];
+const supportedComposerVideoExtensions = [
+  ".mp4",
+  ".mov",
+  ".m4v",
+  ".webm",
+  ".avi",
+  ".mkv",
+  ".mpeg",
+  ".mpg",
+  ".3gp",
+];
+const memberVocalRangeOptions = [
+  "Soprano",
+  "Mezzo-soprano",
+  "Contralto",
+  "Tenor",
+  "Barítono",
+  "Baixo",
+];
 
 type MemberRoleVisual = {
   label: string;
@@ -207,6 +238,8 @@ type MemberRoleVisual = {
   icon: React.ElementType;
   accentClassName: string;
 };
+
+type ManagedMemberRoleKey = "admin" | "developer" | "maestro" | "secretary" | "vice-secretary" | "member";
 
 function createId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -433,6 +466,38 @@ function fileMatchesExtensions(file: File, supportedExtensions: string[]) {
   return supportedExtensions.includes(getLowercaseFileExtension(file.name));
 }
 
+function resolveComposerMediaKind(file: File): "image" | "video" | null {
+  const normalizedType = file.type.trim().toLowerCase();
+
+  if (normalizedType.startsWith("image/")) {
+    return "image";
+  }
+
+  if (normalizedType.startsWith("video/")) {
+    return "video";
+  }
+
+  if (fileMatchesExtensions(file, supportedComposerImageExtensions)) {
+    return "image";
+  }
+
+  if (fileMatchesExtensions(file, supportedComposerVideoExtensions)) {
+    return "video";
+  }
+
+  if ((normalizedType === "" || normalizedType === "application/octet-stream") && file.size > 0) {
+    if (fileMatchesExtensions(file, supportedComposerImageExtensions)) {
+      return "image";
+    }
+
+    if (fileMatchesExtensions(file, supportedComposerVideoExtensions)) {
+      return "video";
+    }
+  }
+
+  return null;
+}
+
 function isSupportedSongAudioFile(file: File) {
   const normalizedType = file.type.trim().toLowerCase();
 
@@ -457,6 +522,128 @@ function describeSongPickerFile(file: File) {
     formatStorageBytes(file.size),
     file.type || "tipo não informado",
   ].join(" • ");
+}
+
+function resolveManagedMemberRoleKey(
+  accountLevel: string | AccessLevel | undefined,
+  leadershipRole: string | undefined,
+): ManagedMemberRoleKey {
+  if (leadershipRole === "Desenvolvedor") {
+    return "developer";
+  }
+
+  if (normalizeAccessLevel(accountLevel) === "administration") {
+    return "admin";
+  }
+
+  if (leadershipRole === "Maestro") {
+    return "maestro";
+  }
+
+  if (leadershipRole === "Secretário") {
+    return "secretary";
+  }
+
+  if (leadershipRole === "Vice-Secretário") {
+    return "vice-secretary";
+  }
+
+  return "member";
+}
+
+function resolveManagedMemberRoleLabel(roleKey: ManagedMemberRoleKey) {
+  switch (roleKey) {
+    case "admin":
+      return "Administrador do Vocal";
+    case "developer":
+      return "Desenvolvedor";
+    case "maestro":
+      return "Maestro";
+    case "secretary":
+      return "Secretário";
+    case "vice-secretary":
+      return "Vice-Secretário";
+    default:
+      return "Membro do vocal";
+  }
+}
+
+function canManageMemberTarget(
+  actorRole: ManagedMemberRoleKey,
+  targetRole: ManagedMemberRoleKey,
+  actorUid: string,
+  targetUid: string,
+) {
+  if (!actorUid || !targetUid || actorUid === targetUid) {
+    return false;
+  }
+
+  if (actorRole === "admin") {
+    return true;
+  }
+
+  if (actorRole === "developer") {
+    return targetRole !== "admin";
+  }
+
+  if (actorRole === "maestro") {
+    return targetRole !== "admin" && targetRole !== "developer";
+  }
+
+  if (actorRole === "secretary" || actorRole === "vice-secretary") {
+    return targetRole === "member" || targetRole === "secretary" || targetRole === "vice-secretary";
+  }
+
+  return false;
+}
+
+function canEditMemberTarget(
+  actorRole: ManagedMemberRoleKey,
+  targetRole: ManagedMemberRoleKey,
+  actorUid: string,
+  targetUid: string,
+) {
+  if (!actorUid || !targetUid || actorUid === targetUid) {
+    return false;
+  }
+
+  if (actorRole === "admin") {
+    return true;
+  }
+
+  if (actorRole === "developer") {
+    return targetRole !== "admin";
+  }
+
+  if (actorRole === "maestro") {
+    return targetRole !== "admin" && targetRole !== "developer";
+  }
+
+  if (actorRole === "secretary" || actorRole === "vice-secretary") {
+    return targetRole === "member" || targetRole === "secretary" || targetRole === "vice-secretary";
+  }
+
+  return false;
+}
+
+function getAssignableManagedRoleKeys(actorRole: ManagedMemberRoleKey) {
+  if (actorRole === "admin") {
+    return ["admin", "developer", "maestro", "secretary", "vice-secretary", "member"] satisfies ManagedMemberRoleKey[];
+  }
+
+  if (actorRole === "developer") {
+    return ["developer", "maestro", "secretary", "vice-secretary", "member"] satisfies ManagedMemberRoleKey[];
+  }
+
+  if (actorRole === "maestro") {
+    return ["maestro", "secretary", "vice-secretary", "member"] satisfies ManagedMemberRoleKey[];
+  }
+
+  if (actorRole === "secretary" || actorRole === "vice-secretary") {
+    return ["secretary", "vice-secretary", "member"] satisfies ManagedMemberRoleKey[];
+  }
+
+  return [] satisfies ManagedMemberRoleKey[];
 }
 
 function normalizeVoiceType(value: string): SongVoicePart | "" {
@@ -493,6 +680,10 @@ function isGenericVoiceType(value: string) {
   return normalizeComparableText(value) === "geral";
 }
 
+function matchesVoiceTypeForMember(value: string, voicePart: SongVoicePart | "") {
+  return Boolean(voicePart) && normalizeVoiceType(value) === voicePart;
+}
+
 function buildPostPrimaryImageUrl(mediaItems: HomePostMediaRecord[]) {
   return mediaItems.find((item) => item.kind === "image")?.url || "";
 }
@@ -502,7 +693,7 @@ function createComposerMediaPreviews(files: File[]) {
     id: `${file.name}-${file.size}-${index}`,
     name: file.name,
     previewUrl: URL.createObjectURL(file),
-    kind: file.type.startsWith("video/") ? "video" : "image",
+    kind: resolveComposerMediaKind(file) === "video" ? "video" : "image",
     sizeBytes: file.size,
   })) satisfies ComposerMediaPreview[];
 }
@@ -825,7 +1016,20 @@ export function HomePage({
   const [showHelpModal, setShowHelpModal] = useState(false);
   const [showNotificationsModal, setShowNotificationsModal] = useState(false);
   const [activeProfileScreen, setActiveProfileScreen] = useState<ProfileScreen | null>(null);
-  const [showMemberDetailModal, setShowMemberDetailModal] = useState(false);
+  const [activeMemberScreen, setActiveMemberScreen] = useState<MemberScreen | null>(null);
+  const [memberManagementNameDraft, setMemberManagementNameDraft] = useState("");
+  const [memberManagementPhoneDraft, setMemberManagementPhoneDraft] = useState("");
+  const [memberManagementVocalRangeDraft, setMemberManagementVocalRangeDraft] = useState("");
+  const [memberManagementAvatarPreview, setMemberManagementAvatarPreview] = useState("");
+  const [memberManagementAvatarDataUrl, setMemberManagementAvatarDataUrl] = useState<string | null>(null);
+  const [memberManagementAvatarEditorSource, setMemberManagementAvatarEditorSource] = useState("");
+  const [memberManagementRoleDraft, setMemberManagementRoleDraft] = useState<ManagedMemberRoleKey>("member");
+  const [memberManagementLoading, setMemberManagementLoading] = useState(false);
+  const [memberManagementSubmitting, setMemberManagementSubmitting] = useState(false);
+  const [memberManagementDisabled, setMemberManagementDisabled] = useState(false);
+  const [memberManagementAuthExists, setMemberManagementAuthExists] = useState(true);
+  const [memberManagementEmail, setMemberManagementEmail] = useState("");
+  const [memberManagementStatus, setMemberManagementStatus] = useState("");
   const [showHomeFeedHeader, setShowHomeFeedHeader] = useState(true);
   const [showAgendaPanel, setShowAgendaPanel] = useState(true);
   const [activePostId, setActivePostId] = useState("");
@@ -885,6 +1089,8 @@ export function HomePage({
   const songLyricsInputRef = useRef<HTMLInputElement | null>(null);
   const songScoreInputRef = useRef<HTMLInputElement | null>(null);
   const profileAvatarInputRef = useRef<HTMLInputElement | null>(null);
+  const memberAvatarInputRef = useRef<HTMLInputElement | null>(null);
+  const managedMemberContextUidRef = useRef("");
 
   const deferredQuery = useDeferredValue(query.trim().toLowerCase());
   const currentUser = firebaseAuth.currentUser;
@@ -913,6 +1119,7 @@ export function HomePage({
     resolvedLeadershipRole === "Desenvolvedor" ||
     resolvedLeadershipRole === "Maestro" ||
     resolvedLeadershipRole === "Secretário";
+  const currentManagementRole = resolveManagedMemberRoleKey(resolvedAccessLevel, resolvedLeadershipRole);
   const canRemoveManagedContent =
     resolvedAccessLevel === "administration" ||
     resolvedLeadershipRole === "Maestro" ||
@@ -1129,9 +1336,30 @@ export function HomePage({
   const activePost = posts.find((post) => post.id === activePostId) || null;
   const activeSong = songs.find((song) => song.id === activeSongId) || null;
   const currentVoicePart = normalizeVoiceType(resolvedVocalRange);
+  const selectedMemberManagementRole = selectedDirectoryMember
+    ? resolveManagedMemberRoleKey(selectedDirectoryMember.accountLevel, selectedDirectoryMember.leadershipRole)
+    : "member";
+  const canEditSelectedMember = Boolean(selectedDirectoryMember) && canEditMemberTarget(
+    currentManagementRole,
+    selectedMemberManagementRole,
+    currentUid,
+    selectedDirectoryMember.uid,
+  );
+  const canManageSelectedMember = Boolean(selectedDirectoryMember) && canManageMemberTarget(
+    currentManagementRole,
+    selectedMemberManagementRole,
+    currentUid,
+    selectedDirectoryMember.uid,
+  );
+  const canOpenSelectedMemberEditor = canEditSelectedMember || canManageSelectedMember;
+  const assignableManagedRoleKeys = canEditSelectedMember
+    ? getAssignableManagedRoleKeys(currentManagementRole)
+    : [];
   const nextEvent = filteredAgendaEvents[0] ?? agendaEvents[0];
   const profileAvatar = profileAvatarPreview || currentUser?.photoURL || profile?.avatarDataUrl || "";
+  const managedMemberAvatar = memberManagementAvatarPreview || selectedDirectoryMember?.avatarDataUrl || "";
   const hasPendingProfileAvatar = Boolean(profileAvatarDataUrl);
+  const hasPendingManagedMemberAvatar = Boolean(memberManagementAvatarDataUrl);
   const sharedStorageUsedBytes = useMemo(
     () =>
       posts.reduce(
@@ -1163,7 +1391,7 @@ export function HomePage({
       return genericAssets;
     }
 
-    const currentVoiceAssets = activeSong.voiceAssets.filter((asset) => asset.voiceType === currentVoicePart);
+    const currentVoiceAssets = activeSong.voiceAssets.filter((asset) => matchesVoiceTypeForMember(asset.voiceType, currentVoicePart));
 
     return [...currentVoiceAssets, ...genericAssets.filter((asset) => asset.voiceType !== currentVoicePart)];
   }, [activeSong, canViewAllSongTracks, currentVoicePart]);
@@ -1186,8 +1414,8 @@ export function HomePage({
     showComposer ||
     Boolean(activeSong) ||
     Boolean(activeProfileScreen) ||
+    Boolean(activeMemberScreen) ||
     showHelpModal ||
-    showMemberDetailModal ||
     showNotificationsModal ||
     showLogoutModal;
   const notificationItems = useMemo<AgendaNotificationItem[]>(
@@ -1278,6 +1506,119 @@ export function HomePage({
       setIsSongDocumentExpanded(false);
     }
   }, [selectedSongDocumentUrl]);
+
+  useEffect(() => {
+    if ((activeMemberScreen !== "details" && activeMemberScreen !== "editor") || !selectedDirectoryMember) {
+      return;
+    }
+
+    if (managedMemberContextUidRef.current === selectedDirectoryMember.uid) {
+      return;
+    }
+
+    managedMemberContextUidRef.current = selectedDirectoryMember.uid;
+
+    const nextTargetRole = resolveManagedMemberRoleKey(
+      selectedDirectoryMember.accountLevel,
+      selectedDirectoryMember.leadershipRole,
+    );
+
+    setMemberManagementRoleDraft(nextTargetRole);
+    setMemberManagementNameDraft(selectedDirectoryMember.name || "");
+    setMemberManagementPhoneDraft(selectedDirectoryMember.phone || "");
+    setMemberManagementVocalRangeDraft(selectedDirectoryMember.vocalRange || "");
+    setMemberManagementAvatarPreview(selectedDirectoryMember.avatarDataUrl || "");
+    setMemberManagementAvatarDataUrl(null);
+    setMemberManagementAvatarEditorSource("");
+    setMemberManagementStatus("");
+    setMemberManagementEmail("");
+    setMemberManagementDisabled(false);
+    setMemberManagementAuthExists(true);
+
+    if (!canOpenSelectedMemberEditor || !currentUser) {
+      setMemberManagementLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+
+    setMemberManagementLoading(true);
+
+    void (async () => {
+      try {
+        const idToken = await currentUser.getIdToken();
+        const response = await fetch("/api/members/manage", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${idToken}`,
+          },
+          body: JSON.stringify({
+            action: "inspect",
+            targetUid: selectedDirectoryMember.uid,
+          }),
+        });
+        const payload = await response.json().catch(() => ({}));
+
+        if (!response.ok) {
+          throw new Error(
+            typeof payload.message === "string"
+              ? payload.message
+              : "Não foi possível carregar as ações deste membro agora.",
+          );
+        }
+
+        if (cancelled) {
+          return;
+        }
+
+        if (typeof payload.target?.roleKey === "string") {
+          setMemberManagementRoleDraft(payload.target.roleKey as ManagedMemberRoleKey);
+        }
+
+        if (typeof payload.target?.name === "string") {
+          setMemberManagementNameDraft(payload.target.name);
+        }
+
+        if (typeof payload.target?.phone === "string") {
+          setMemberManagementPhoneDraft(payload.target.phone);
+        }
+
+        if (typeof payload.target?.vocalRange === "string") {
+          setMemberManagementVocalRangeDraft(payload.target.vocalRange);
+        }
+
+        if (typeof payload.target?.avatarDataUrl === "string") {
+          setMemberManagementAvatarPreview(payload.target.avatarDataUrl);
+        }
+
+        setMemberManagementDisabled(Boolean(payload.target?.disabled));
+        setMemberManagementAuthExists(payload.target?.authExists !== false);
+        setMemberManagementEmail(typeof payload.target?.email === "string" ? payload.target.email : "");
+      } catch (error) {
+        if (!cancelled) {
+          setMemberManagementStatus(
+            error instanceof Error
+              ? error.message
+              : "Não foi possível carregar as ações deste membro agora.",
+          );
+        }
+      } finally {
+        if (!cancelled) {
+          setMemberManagementLoading(false);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    canOpenSelectedMemberEditor,
+    currentUser,
+    selectedDirectoryMember,
+    activeMemberScreen,
+  ]);
 
   useEffect(() => {
     if (activeAgendaDate && !agendaEventsByDate.has(activeAgendaDate)) {
@@ -1427,6 +1768,7 @@ export function HomePage({
     setShowNotificationsModal(false);
     markAgendaNotificationsAsSeen();
     setActiveProfileScreen(null);
+    setActiveMemberScreen(null);
     setActivePostId("");
     setActiveTab("agenda");
     setAgendaMonthKey(item.scheduledDate.slice(0, 7));
@@ -1435,6 +1777,7 @@ export function HomePage({
 
   const openTab = (tab: HomeTab) => {
     setActiveProfileScreen(null);
+    setActiveMemberScreen(null);
     setActiveTab(tab);
     setActivePostId("");
     setActiveAgendaDate("");
@@ -1445,6 +1788,28 @@ export function HomePage({
     setActiveAgendaDate("");
   };
 
+  const resetMemberManagementState = () => {
+    managedMemberContextUidRef.current = "";
+    setMemberManagementNameDraft("");
+    setMemberManagementPhoneDraft("");
+    setMemberManagementVocalRangeDraft("");
+    setMemberManagementAvatarPreview("");
+    setMemberManagementAvatarDataUrl(null);
+    setMemberManagementAvatarEditorSource("");
+    setMemberManagementRoleDraft("member");
+    setMemberManagementLoading(false);
+    setMemberManagementSubmitting(false);
+    setMemberManagementDisabled(false);
+    setMemberManagementAuthExists(true);
+    setMemberManagementEmail("");
+    setMemberManagementStatus("");
+  };
+
+  const closeMemberDetailPage = () => {
+    setActiveMemberScreen(null);
+    resetMemberManagementState();
+  };
+
   const closeComposer = () => {
     setShowComposer(false);
     clearPostMediaSelection();
@@ -1453,6 +1818,7 @@ export function HomePage({
 
   const openPostDetail = (postId: string) => {
     setActiveProfileScreen(null);
+    setActiveMemberScreen(null);
     setActivePostId(postId);
   };
 
@@ -1462,6 +1828,7 @@ export function HomePage({
 
   const openSongDetail = (songId: string) => {
     setActiveProfileScreen(null);
+    setActiveMemberScreen(null);
     setActivePostId("");
     setActiveAgendaDate("");
     setIsSongDocumentExpanded(false);
@@ -1475,6 +1842,7 @@ export function HomePage({
 
   const openProfilePage = () => {
     setProfileStatus("");
+    setActiveMemberScreen(null);
     setActiveProfileScreen("details");
   };
 
@@ -1515,6 +1883,7 @@ export function HomePage({
 
   const openComposer = () => {
     setActiveProfileScreen(null);
+    setActiveMemberScreen(null);
     if (activeTab === "songs" && canManageSongs) {
       setComposerMode("song");
     } else if (activeTab === "agenda" && canManageAgenda) {
@@ -1548,6 +1917,25 @@ export function HomePage({
     setShowComposer(true);
   };
 
+  const openMemberDetailPage = (memberUid: string) => {
+    setActiveProfileScreen(null);
+    setActivePostId("");
+    setActiveAgendaDate("");
+    setActiveSongId("");
+    setSelectedDirectoryUid(memberUid);
+    managedMemberContextUidRef.current = "";
+    setActiveMemberScreen("details");
+  };
+
+  const openManagedMemberEditorPage = () => {
+    if (!selectedDirectoryMember || !canOpenSelectedMemberEditor) {
+      return;
+    }
+
+    setMemberManagementStatus("");
+    setActiveMemberScreen("editor");
+  };
+
   const handleComposerFieldChange = (event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
     const { name, value } = event.target;
     setComposerDraft((current) => ({ ...current, [name]: value }));
@@ -1555,7 +1943,7 @@ export function HomePage({
 
   const handlePostMediaFilesChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const nextFiles = Array.from(event.target.files || []).filter(
-      (file) => file.type.startsWith("image/") || file.type.startsWith("video/"),
+      (file) => resolveComposerMediaKind(file) !== null,
     );
     event.target.value = "";
 
@@ -1624,9 +2012,11 @@ export function HomePage({
 
       setComposerSubmitting(true);
       setSongStatus("Enviando arquivos da música para o Storage...");
+      const songUploadToastId = toast.loading("Enviando arquivos da música...");
 
       const songId = createId("song");
       const uploadedPaths: string[] = [];
+      let songCreated = false;
 
       try {
         const voiceAssets: SongVoiceAssetRecord[] = [];
@@ -1662,7 +2052,7 @@ export function HomePage({
           uploadedPaths.push(scoreFile.path);
         }
 
-        await createSongLibraryItem({
+        const createdSong = await createSongLibraryItem({
           id: songId,
           title: normalizedTitle,
           artist: composerDraft.artist.trim(),
@@ -1676,18 +2066,30 @@ export function HomePage({
           lyricFile,
           scoreFile,
         });
+        songCreated = true;
 
-        const nextSongs = await fetchSongLibraryContent();
-        setSongs(nextSongs);
-        setSongStatus("Música adicionada com arquivos organizados por voz.");
+        setSongs((current) => [
+          mapSongLibraryRecord(createdSong),
+          ...current.filter((song) => song.id !== createdSong.id),
+        ]);
         setActiveTab("songs");
         closeComposer();
+        setSongStatus("Música salva com sucesso.");
+        toast.success("Música salva com sucesso.", { id: songUploadToastId });
+
+        void fetchSongLibraryContent()
+          .then((nextSongs) => {
+            setSongs(nextSongs);
+          })
+          .catch(() => undefined);
       } catch (error) {
-        if (uploadedPaths.length > 0) {
+        if (!songCreated && uploadedPaths.length > 0) {
           await deleteStorageObjects(uploadedPaths).catch(() => undefined);
         }
 
-        setSongStatus(extractOperationMessage(error, "Não foi possível salvar a música agora."));
+        const message = extractOperationMessage(error, "Não foi possível salvar a música agora.");
+        setSongStatus(message);
+        toast.error(message, { id: songUploadToastId });
       } finally {
         setComposerSubmitting(false);
       }
@@ -1725,8 +2127,10 @@ export function HomePage({
         setAgendaStatus("Compromisso salvo com sucesso na agenda.");
         setActiveTab("agenda");
         closeComposer();
+        toast.success("Compromisso publicado na agenda.");
       } catch {
         setAgendaStatus("Não foi possível salvar esse compromisso no Firestore agora.");
+        toast.error("Não foi possível salvar esse compromisso no Firestore agora.");
       } finally {
         setComposerSubmitting(false);
       }
@@ -1776,12 +2180,15 @@ export function HomePage({
         setHomeStatus("Publicação enviada ao mural.");
         setActiveTab("home");
         closeComposer();
+        toast.success("Publicação enviada ao mural.");
       } catch (error) {
         if (uploadedPaths.length > 0) {
           await deleteStorageObjects(uploadedPaths).catch(() => undefined);
         }
 
-        setHomeStatus(extractOperationMessage(error, "Não foi possível publicar no mural agora."));
+        const message = extractOperationMessage(error, "Não foi possível publicar no mural agora.");
+        setHomeStatus(message);
+        toast.error(message);
       } finally {
         setComposerSubmitting(false);
       }
@@ -1825,8 +2232,11 @@ export function HomePage({
         setPosts(nextPosts);
       }
       setHomeStatus("Comentário enviado para o mural.");
+      toast.success("Comentário publicado no mural.");
     } catch (error) {
-      setHomeStatus(extractOperationMessage(error, "O comentário apareceu na tela, mas a sincronização com o servidor falhou."));
+      const message = extractOperationMessage(error, "O comentário apareceu na tela, mas a sincronização com o servidor falhou.");
+      setHomeStatus(message);
+      toast.error(message);
     }
   };
 
@@ -1900,8 +2310,10 @@ export function HomePage({
       setAgendaEvents(nextAgendaEvents);
       setCommentDrafts((current) => ({ ...current, [eventId]: "" }));
       setAgendaStatus("Comentário enviado para a agenda.");
+      toast.success("Comentário enviado para a agenda.");
     } catch {
       setAgendaStatus("Não foi possível comentar nesse compromisso agora.");
+      toast.error("Não foi possível comentar nesse compromisso agora.");
     }
   };
 
@@ -1930,6 +2342,211 @@ export function HomePage({
     }
   };
 
+  const refreshDirectoryMembers = async (nextStatusMessage?: string) => {
+    const directoryResult = await fetchDirectoryContent(currentUid, profile);
+    setDirectoryMembers(sortDirectoryMembers(directoryResult.members));
+    setDirectoryStatus(nextStatusMessage || directoryResult.statusMessage || "Diretório atualizado.");
+    return directoryResult.members;
+  };
+
+  const callManagedMemberAction = async (
+    action: "inspect" | "update-profile" | "update-role" | "set-disabled" | "delete-account",
+    payload: Record<string, unknown>,
+  ) => {
+    if (!currentUser) {
+      throw new Error("Não foi possível identificar sua sessão para gerenciar membros.");
+    }
+
+    const idToken = await currentUser.getIdToken();
+    const response = await fetch("/api/members/manage", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${idToken}`,
+      },
+      body: JSON.stringify({
+        action,
+        ...payload,
+      }),
+    });
+    const responsePayload = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      throw new Error(
+        typeof responsePayload.message === "string"
+          ? responsePayload.message
+          : "Não foi possível concluir esta ação no membro agora.",
+      );
+    }
+
+    return responsePayload as {
+      message?: string;
+      target?: {
+        uid?: string;
+        name?: string;
+        phone?: string;
+        vocalRange?: string;
+        avatarDataUrl?: string;
+        disabled?: boolean;
+        deleted?: boolean;
+        roleKey?: ManagedMemberRoleKey;
+      };
+    };
+  };
+
+  const saveManagedMemberProfile = async () => {
+    if (!selectedDirectoryMember || !canEditSelectedMember) {
+      return;
+    }
+
+    const normalizedName = memberManagementNameDraft.trim();
+    const normalizedPhone = memberManagementPhoneDraft.trim();
+    const normalizedVocalRange = memberManagementVocalRangeDraft.trim();
+
+    if (!normalizedName) {
+      const message = "Informe um nome válido antes de salvar.";
+      setMemberManagementStatus(message);
+      toast.error(message);
+      return;
+    }
+
+    const hasProfileChanges =
+      normalizedName !== selectedDirectoryMember.name.trim() ||
+      normalizedPhone !== (selectedDirectoryMember.phone || "").trim() ||
+      normalizedVocalRange !== (selectedDirectoryMember.vocalRange || "").trim() ||
+      Boolean(memberManagementAvatarDataUrl);
+    const hasRoleChange = memberManagementRoleDraft !== selectedMemberManagementRole;
+
+    if (!hasProfileChanges && !hasRoleChange) {
+      const message = "Altere nome, telefone, timbre, foto ou cargo antes de salvar.";
+      setMemberManagementStatus(message);
+      toast(message);
+      return;
+    }
+
+    const saveToastId = toast.loading("Salvando alterações do membro...");
+    setMemberManagementSubmitting(true);
+    setMemberManagementStatus("Salvando alterações do membro...");
+
+    try {
+      let successMessage = "Alterações do membro salvas com sucesso.";
+
+      if (hasProfileChanges) {
+        const responsePayload = await callManagedMemberAction("update-profile", {
+          targetUid: selectedDirectoryMember.uid,
+          name: normalizedName,
+          phone: normalizedPhone,
+          vocalRange: normalizedVocalRange,
+          avatarDataUrl: memberManagementAvatarDataUrl ?? undefined,
+        });
+
+        setMemberManagementNameDraft(responsePayload.target?.name || normalizedName);
+        setMemberManagementPhoneDraft(responsePayload.target?.phone || normalizedPhone);
+        setMemberManagementVocalRangeDraft(responsePayload.target?.vocalRange || normalizedVocalRange);
+        setMemberManagementAvatarPreview(responsePayload.target?.avatarDataUrl || managedMemberAvatar);
+        successMessage = responsePayload.message || "Dados do membro atualizados com sucesso.";
+      }
+
+      if (hasRoleChange) {
+        const responsePayload = await callManagedMemberAction("update-role", {
+          targetUid: selectedDirectoryMember.uid,
+          nextRoleKey: memberManagementRoleDraft,
+        });
+
+        if (typeof responsePayload.target?.roleKey === "string") {
+          setMemberManagementRoleDraft(responsePayload.target.roleKey as ManagedMemberRoleKey);
+        }
+
+        successMessage = hasProfileChanges
+          ? "Dados e cargo do membro atualizados com sucesso."
+          : responsePayload.message || "Cargo atualizado com sucesso.";
+      }
+
+      await refreshDirectoryMembers(successMessage);
+      setMemberManagementAvatarDataUrl(null);
+      setMemberManagementAvatarEditorSource("");
+      setMemberManagementStatus(successMessage);
+      setActiveMemberScreen("details");
+      toast.success(successMessage, { id: saveToastId });
+    } catch (error) {
+      const message = error instanceof Error
+        ? error.message
+        : "Não foi possível atualizar este membro agora.";
+      setMemberManagementStatus(message);
+      toast.error(message, { id: saveToastId });
+    } finally {
+      setMemberManagementSubmitting(false);
+    }
+  };
+
+  const setManagedMemberDisabledState = async (nextDisabledState: boolean) => {
+    if (!selectedDirectoryMember || !canManageSelectedMember) {
+      return;
+    }
+
+    const confirmationMessage = nextDisabledState
+      ? `Desativar a conta de ${selectedDirectoryMember.name}? Ela não conseguirá entrar até ser reativada.`
+      : `Reativar a conta de ${selectedDirectoryMember.name}?`;
+
+    if (!window.confirm(confirmationMessage)) {
+      return;
+    }
+
+    setMemberManagementSubmitting(true);
+    setMemberManagementStatus(nextDisabledState ? "Desativando conta..." : "Reativando conta...");
+
+    try {
+      const responsePayload = await callManagedMemberAction("set-disabled", {
+        targetUid: selectedDirectoryMember.uid,
+        disabled: nextDisabledState,
+      });
+
+      setMemberManagementDisabled(nextDisabledState);
+      const message = responsePayload.message || (nextDisabledState ? "Conta desativada com sucesso." : "Conta reativada com sucesso.");
+      setMemberManagementStatus(message);
+      toast.success(message);
+    } catch (error) {
+      const message = error instanceof Error
+        ? error.message
+        : "Não foi possível alterar o estado da conta agora.";
+      setMemberManagementStatus(message);
+      toast.error(message);
+    } finally {
+      setMemberManagementSubmitting(false);
+    }
+  };
+
+  const deleteManagedMemberAccount = async () => {
+    if (!selectedDirectoryMember || !canManageSelectedMember) {
+      return;
+    }
+
+    if (!window.confirm(`Apagar a conta de ${selectedDirectoryMember.name}? Esta ação remove o acesso e o cadastro do diretório.`)) {
+      return;
+    }
+
+    setMemberManagementSubmitting(true);
+    setMemberManagementStatus("Apagando conta...");
+
+    try {
+      const responsePayload = await callManagedMemberAction("delete-account", {
+        targetUid: selectedDirectoryMember.uid,
+      });
+
+      await refreshDirectoryMembers(responsePayload.message || "Conta apagada com sucesso.");
+      toast.success(responsePayload.message || "Conta apagada com sucesso.");
+      closeMemberDetailPage();
+    } catch (error) {
+      const message = error instanceof Error
+        ? error.message
+        : "Não foi possível apagar esta conta agora.";
+      setMemberManagementStatus(message);
+      toast.error(message);
+    } finally {
+      setMemberManagementSubmitting(false);
+    }
+  };
+
   const handleProfileFieldChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = event.target;
     setProfileDraft((current) => ({ ...current, [name]: value }));
@@ -1943,6 +2560,14 @@ export function HomePage({
     setActiveProfileScreen("editor");
   };
 
+  const openManagedMemberAvatarEditor = async (file: File) => {
+    const imageDataUrl = await readImageFileAsDataUrl(file);
+
+    setMemberManagementStatus("");
+    setMemberManagementAvatarEditorSource(imageDataUrl);
+    setActiveMemberScreen("avatar-editor");
+  };
+
   const handleProfileAvatarChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     event.target.value = "";
@@ -1954,6 +2579,21 @@ export function HomePage({
     void openProfileAvatarEditor(file).catch((error) => {
       setProfileStatus(
         error instanceof Error ? error.message : "Não foi possível abrir o editor da foto agora.",
+      );
+    });
+  };
+
+  const handleManagedMemberAvatarChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+
+    if (!file) {
+      return;
+    }
+
+    void openManagedMemberAvatarEditor(file).catch((error) => {
+      setMemberManagementStatus(
+        error instanceof Error ? error.message : "Não foi possível abrir o editor da foto deste membro agora.",
       );
     });
   };
@@ -1985,10 +2625,11 @@ export function HomePage({
       setDirectoryMembers(sortDirectoryMembers(directoryResult.members));
       setDirectoryStatus(directoryResult.statusMessage);
       setProfileStatus("Perfil atualizado com sucesso.");
+      toast.success("Perfil atualizado com sucesso.");
     } catch (error) {
-      setProfileStatus(
-        error instanceof Error ? error.message : "Não foi possível atualizar seu perfil agora.",
-      );
+      const message = error instanceof Error ? error.message : "Não foi possível atualizar seu perfil agora.";
+      setProfileStatus(message);
+      toast.error(message);
     } finally {
       setProfileSaving(false);
     }
@@ -2010,8 +2651,11 @@ export function HomePage({
       const nextAgendaEvents = await fetchAgendaContent();
       setAgendaEvents(nextAgendaEvents);
       setAgendaStatus("Compromisso removido da agenda.");
+      toast.success("Compromisso removido da agenda.");
     } catch (error) {
-      setAgendaStatus(extractOperationMessage(error, "Não foi possível remover esse compromisso agora."));
+      const message = extractOperationMessage(error, "Não foi possível remover esse compromisso agora.");
+      setAgendaStatus(message);
+      toast.error(message);
     }
   };
 
@@ -2038,8 +2682,11 @@ export function HomePage({
       setPosts(nextPosts);
       setActivePostId("");
       setHomeStatus("Publicação removida do mural.");
+      toast.success("Publicação removida do mural.");
     } catch (error) {
-      setHomeStatus(extractOperationMessage(error, "Não foi possível remover essa publicação agora."));
+      const message = extractOperationMessage(error, "Não foi possível remover essa publicação agora.");
+      setHomeStatus(message);
+      toast.error(message);
     }
   };
 
@@ -2070,8 +2717,11 @@ export function HomePage({
       setSongs(nextSongs);
       setActiveSongId("");
       setSongStatus("Música removida da biblioteca.");
+      toast.success("Música removida da biblioteca.");
     } catch (error) {
-      setSongStatus(extractOperationMessage(error, "Não foi possível remover essa música agora."));
+      const message = extractOperationMessage(error, "Não foi possível remover essa música agora.");
+      setSongStatus(message);
+      toast.error(message);
     }
   };
 
@@ -2084,8 +2734,10 @@ export function HomePage({
     try {
       await navigator.clipboard.writeText(phone);
       setDirectoryStatus("Telefone copiado para a área de transferência.");
+      toast.success("Telefone copiado.");
     } catch {
       setDirectoryStatus("Não foi possível copiar o telefone agora.");
+      toast.error("Não foi possível copiar o telefone agora.");
     }
   };
 
@@ -2679,10 +3331,7 @@ export function HomePage({
                         key={member.uid}
                         type="button"
                         className={`home-directory-item${selectedDirectoryUid === member.uid ? " is-active" : ""}`}
-                        onClick={() => {
-                          setSelectedDirectoryUid(member.uid);
-                          setShowMemberDetailModal(true);
-                        }}
+                        onClick={() => openMemberDetailPage(member.uid)}
                       >
                         <div className="home-directory-avatar">
                           {member.avatarDataUrl ? <img src={member.avatarDataUrl} alt={member.name} /> : <span>{getInitials(member.name)}</span>}
@@ -2710,14 +3359,14 @@ export function HomePage({
         </main>
 
         {(activeTab === "songs" ? canManageSongs : activeTab === "agenda" ? canManageAgenda : canPost) ? (
-          !activePost && !activeAgendaDate && !activeSong && !activeProfileScreen ? (
+          !activePost && !activeAgendaDate && !activeSong && !activeProfileScreen && !activeMemberScreen ? (
           <button className="home-fab-action" type="button" aria-label={activeTab === "agenda" ? "Criar evento" : activeTab === "songs" ? "Adicionar música" : "Criar publicação"} onClick={openComposer}>
             <FiPlus size={24} />
           </button>
           ) : null
         ) : null}
 
-        {!activePost && !activeAgendaDate && !activeSong && !activeProfileScreen ? <nav className="home-bottom-nav" aria-label="Navegação principal">
+        {!activePost && !activeAgendaDate && !activeSong && !activeProfileScreen && !activeMemberScreen ? <nav className="home-bottom-nav" aria-label="Navegação principal">
           <button className={`nav-icon-btn${activeTab === "home" ? " is-active" : ""}`} type="button" aria-label="Home" onClick={() => openTab("home")}>
             <FiHome size={22} />
             <span>Home</span>
@@ -2747,6 +3396,14 @@ export function HomePage({
           onChange={handleProfileAvatarChange}
         />
 
+        <input
+          ref={memberAvatarInputRef}
+          className="hidden-input"
+          type="file"
+          accept="image/*"
+          onChange={handleManagedMemberAvatarChange}
+        />
+
         <AvatarEditorModal
           open={activeProfileScreen === "editor"}
           layout="page"
@@ -2764,6 +3421,27 @@ export function HomePage({
             setActiveProfileScreen("photo");
             setProfileAvatarEditorSource("");
             setProfileStatus("Nova foto pronta. Salve o perfil para publicar a alteração.");
+          }}
+        />
+
+        <AvatarEditorModal
+          open={activeMemberScreen === "avatar-editor"}
+          layout="page"
+          backLabel="Voltar à edição"
+          imageSrc={memberManagementAvatarEditorSource}
+          title="Ajuste a foto do membro"
+          description="Corte, aproxime, afaste e ajuste a imagem antes de salvar as alterações deste integrante."
+          onClose={() => {
+            setActiveMemberScreen("editor");
+            setMemberManagementAvatarEditorSource("");
+          }}
+          onApply={async (dataUrl) => {
+            setMemberManagementAvatarPreview(dataUrl);
+            setMemberManagementAvatarDataUrl(dataUrl);
+            setActiveMemberScreen("editor");
+            setMemberManagementAvatarEditorSource("");
+            setMemberManagementStatus("Nova foto pronta. Salve os dados do membro para publicar a alteração.");
+            toast.success("Nova foto pronta para salvar.");
           }}
         />
 
@@ -3578,72 +4256,274 @@ export function HomePage({
         </div>
       ) : null}
 
-      {showMemberDetailModal && selectedDirectoryMember ? (
-        <div className="home-modal-backdrop home-member-detail-backdrop" role="presentation" onClick={() => setShowMemberDetailModal(false)}>
-          <div className="home-modal-card compact home-member-detail-modal" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
-            <div className="home-modal-header">
-              <div>
-                <p className="home-card-eyebrow">Contato interno</p>
-                <h3>{selectedDirectoryMember.name}</h3>
-              </div>
-              <button type="button" className="home-modal-close" onClick={() => setShowMemberDetailModal(false)}>
-                Fechar
-              </button>
+      {activeMemberScreen === "details" && selectedDirectoryMember ? (
+        <section className="home-post-screen home-member-screen" role="dialog" aria-modal="true">
+          <div className="home-post-screen-header">
+            <button type="button" className="home-secondary-action compact" onClick={closeMemberDetailPage}>
+              <FiArrowLeft size={16} />
+              Voltar aos membros
+            </button>
+
+            <div className="home-member-screen-header-actions">
+              {canOpenSelectedMemberEditor ? (
+                <button
+                  type="button"
+                  className="home-secondary-action compact"
+                  onClick={openManagedMemberEditorPage}
+                >
+                  Editar membro
+                </button>
+              ) : null}
+              <span className="home-role-chip">Contato interno</span>
             </div>
+          </div>
 
-            <div className="home-directory-detail-header home-member-detail-header">
-              <div className="home-directory-avatar large">
-                {selectedDirectoryMember.avatarDataUrl ? <img src={selectedDirectoryMember.avatarDataUrl} alt={selectedDirectoryMember.name} /> : <span>{getInitials(selectedDirectoryMember.name)}</span>}
-              </div>
+          <article className="home-post-detail-card home-member-screen-card">
+            <div className="home-member-screen-hero">
+              <div className="home-member-screen-identity">
+                <div className="home-directory-avatar large home-member-screen-avatar">
+                  {selectedDirectoryMember.avatarDataUrl ? <img src={selectedDirectoryMember.avatarDataUrl} alt={selectedDirectoryMember.name} /> : <span>{getInitials(selectedDirectoryMember.name)}</span>}
+                </div>
 
-              <div>
-                <p className={`home-directory-role ${resolveMemberRoleVisual(selectedDirectoryMember).accentClassName}`}>
-                  {(() => {
-                    const RoleIcon = resolveMemberRoleVisual(selectedDirectoryMember).icon;
-                    return <RoleIcon size={15} />;
-                  })()}
-                  Contato interno • {resolveDirectoryRoleLabel(selectedDirectoryMember)}
-                </p>
-                <div className="home-chip-row">
-                  {selectedDirectoryMember.vocalRange ? <span className="home-chip">Timbre {selectedDirectoryMember.vocalRange}</span> : null}
-                  {selectedDirectoryMember.uid === currentUid ? <span className="home-chip">Seu perfil</span> : null}
+                <div>
+                  <p className="home-card-eyebrow">Contato interno</p>
+                  <h2>{selectedDirectoryMember.name}</h2>
+                  <p className={`home-directory-role ${resolveMemberRoleVisual(selectedDirectoryMember).accentClassName}`}>
+                    {(() => {
+                      const RoleIcon = resolveMemberRoleVisual(selectedDirectoryMember).icon;
+                      return <RoleIcon size={15} />;
+                    })()}
+                    {resolveDirectoryRoleLabel(selectedDirectoryMember)}
+                  </p>
                 </div>
               </div>
-            </div>
 
-            <div className="home-directory-contact-row">
-              <div className="home-directory-contact-card">
-                <FiPhone size={16} />
-                <span>{selectedDirectoryMember.phone || "Telefone não informado"}</span>
-              </div>
-
-              <div className="home-directory-contact-actions">
-                <a
-                  className={`home-whatsapp-btn${selectedDirectoryMember.phoneNormalized ? "" : " is-disabled"}`}
-                  href={selectedDirectoryMember.phoneNormalized ? buildWhatsappLink(selectedDirectoryMember.phoneNormalized) : undefined}
-                  target="_blank"
-                  rel="noreferrer"
-                  aria-disabled={!selectedDirectoryMember.phoneNormalized}
-                  onClick={(event) => {
-                    if (!selectedDirectoryMember.phoneNormalized) {
-                      event.preventDefault();
-                    }
-                  }}
-                >
-                  <FaWhatsapp size={18} />
-                  WhatsApp
-                </a>
-
-                <button type="button" className="home-secondary-action compact" onClick={() => copyPhoneNumber(selectedDirectoryMember.phone)}>
-                  <FiCopy size={15} />
-                  Copiar número
-                </button>
+              <div className="home-chip-row">
+                {selectedDirectoryMember.vocalRange ? <span className="home-chip">Timbre {selectedDirectoryMember.vocalRange}</span> : null}
+                {selectedDirectoryMember.uid === currentUid ? <span className="home-chip">Seu perfil</span> : null}
+                {memberManagementEmail ? <span className="home-chip">{memberManagementEmail}</span> : null}
+                <span className="home-chip">{memberManagementDisabled ? "Conta desativada" : memberManagementAuthExists ? "Conta ativa" : "Sem login ativo"}</span>
               </div>
             </div>
 
-            <p className="home-directory-safety-note">Endereço completo e outros dados privados não aparecem aqui por segurança. Este espaço existe só para facilitar contato rápido e organização do ministério.</p>
+            <div className="home-member-screen-grid">
+              <section className="home-member-panel">
+                <div className="home-member-panel-header">
+                  <strong>Contato rápido</strong>
+                  <p>Somente dados úteis para organização do ministério aparecem aqui.</p>
+                </div>
+
+                <div className="home-directory-contact-row">
+                  <div className="home-directory-contact-card">
+                    <FiPhone size={16} />
+                    <span>{selectedDirectoryMember.phone || "Telefone não informado"}</span>
+                  </div>
+
+                  <div className="home-directory-contact-actions">
+                    <a
+                      className={`home-whatsapp-btn${selectedDirectoryMember.phoneNormalized ? "" : " is-disabled"}`}
+                      href={selectedDirectoryMember.phoneNormalized ? buildWhatsappLink(selectedDirectoryMember.phoneNormalized) : undefined}
+                      target="_blank"
+                      rel="noreferrer"
+                      aria-disabled={!selectedDirectoryMember.phoneNormalized}
+                      onClick={(event) => {
+                        if (!selectedDirectoryMember.phoneNormalized) {
+                          event.preventDefault();
+                        }
+                      }}
+                    >
+                      <FaWhatsapp size={18} />
+                      WhatsApp
+                    </a>
+
+                    <button type="button" className="home-secondary-action compact" onClick={() => copyPhoneNumber(selectedDirectoryMember.phone)}>
+                      <FiCopy size={15} />
+                      Copiar número
+                    </button>
+                  </div>
+                </div>
+
+                <p className="home-directory-safety-note">Endereço completo e outros dados privados não aparecem aqui por segurança. Este espaço existe só para facilitar contato rápido e organização do ministério.</p>
+              </section>
+            </div>
+          </article>
+        </section>
+      ) : null}
+
+      {activeMemberScreen === "editor" && selectedDirectoryMember ? (
+        <section className="home-post-screen home-member-screen" role="dialog" aria-modal="true">
+          <div className="home-post-screen-header">
+            <button type="button" className="home-secondary-action compact" onClick={() => setActiveMemberScreen("details")}>
+              <FiArrowLeft size={16} />
+              Voltar ao contato
+            </button>
+            <span className="home-role-chip">Editor do membro</span>
           </div>
-        </div>
+
+          <article className="home-post-detail-card home-member-screen-card">
+            <div className="home-member-screen-hero">
+              <div className="home-member-screen-identity">
+                <div className="home-directory-avatar large home-member-screen-avatar">
+                  {managedMemberAvatar ? <img src={managedMemberAvatar} alt={selectedDirectoryMember.name} /> : <span>{getInitials(selectedDirectoryMember.name)}</span>}
+                </div>
+
+                <div>
+                  <p className="home-card-eyebrow">Edição dedicada</p>
+                  <h2>{selectedDirectoryMember.name}</h2>
+                  <p>Atualize dados, foto e cargo nesta tela única e volte ao contato interno assim que salvar.</p>
+                </div>
+              </div>
+
+              <div className="home-chip-row">
+                {memberManagementEmail ? <span className="home-chip">{memberManagementEmail}</span> : null}
+                <span className="home-chip">{memberManagementDisabled ? "Conta desativada" : memberManagementAuthExists ? "Conta ativa" : "Sem login ativo"}</span>
+                {hasPendingManagedMemberAvatar ? <span className="home-chip">Nova foto pronta</span> : null}
+              </div>
+            </div>
+
+            <div className="home-member-management-card home-member-management-card-page">
+              <div className="home-member-management-grid">
+                <div className="home-member-management-avatar-block">
+                  <div className="home-member-management-avatar-preview">
+                    {managedMemberAvatar ? <img src={managedMemberAvatar} alt={selectedDirectoryMember.name} /> : <span>{getInitials(selectedDirectoryMember.name)}</span>}
+                  </div>
+
+                  <div className="home-member-management-avatar-copy">
+                    <strong>{hasPendingManagedMemberAvatar ? "Nova foto pronta" : "Foto do membro"}</strong>
+                    <p>Escolha uma imagem, ajuste no editor e finalize tudo com um único salvamento.</p>
+                  </div>
+
+                  <div className="home-member-management-avatar-actions">
+                    <button
+                      type="button"
+                      className="home-secondary-action compact"
+                      onClick={() => memberAvatarInputRef.current?.click()}
+                      disabled={memberManagementLoading || memberManagementSubmitting || !canEditSelectedMember}
+                    >
+                      <FiCamera size={15} />
+                      Escolher foto
+                    </button>
+
+                    <button
+                      type="button"
+                      className="home-secondary-action compact"
+                      onClick={() => {
+                        const source = memberManagementAvatarDataUrl || memberManagementAvatarPreview || selectedDirectoryMember.avatarDataUrl || "";
+
+                        if (!source) {
+                          const message = "Escolha uma imagem antes de abrir o editor da foto.";
+                          setMemberManagementStatus(message);
+                          toast.error(message);
+                          return;
+                        }
+
+                        setMemberManagementAvatarEditorSource(source);
+                        setActiveMemberScreen("avatar-editor");
+                      }}
+                      disabled={memberManagementLoading || memberManagementSubmitting || !managedMemberAvatar || !canEditSelectedMember}
+                    >
+                      <FiEye size={15} />
+                      Reabrir editor
+                    </button>
+                  </div>
+                </div>
+
+                <label className="home-member-management-field">
+                  <span>Nome</span>
+                  <input
+                    type="text"
+                    value={memberManagementNameDraft}
+                    onChange={(event) => setMemberManagementNameDraft(event.target.value)}
+                    placeholder="Nome do membro"
+                    disabled={memberManagementLoading || memberManagementSubmitting || !canEditSelectedMember}
+                  />
+                </label>
+
+                <label className="home-member-management-field">
+                  <span>Telefone</span>
+                  <input
+                    type="tel"
+                    value={memberManagementPhoneDraft}
+                    onChange={(event) => setMemberManagementPhoneDraft(event.target.value)}
+                    placeholder="Telefone do membro"
+                    disabled={memberManagementLoading || memberManagementSubmitting || !canEditSelectedMember}
+                  />
+                </label>
+
+                <label className="home-member-management-field">
+                  <span>Timbre</span>
+                  <select
+                    value={memberManagementVocalRangeDraft}
+                    onChange={(event) => setMemberManagementVocalRangeDraft(event.target.value)}
+                    disabled={memberManagementLoading || memberManagementSubmitting || !canEditSelectedMember}
+                  >
+                    <option value="">Sem timbre definido</option>
+                    {memberVocalRangeOptions.map((option) => (
+                      <option key={option} value={option}>
+                        {option}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                {canEditSelectedMember ? (
+                  <label className="home-member-management-field">
+                    <span>Cargo</span>
+                    <select
+                      value={memberManagementRoleDraft}
+                      onChange={(event) => setMemberManagementRoleDraft(event.target.value as ManagedMemberRoleKey)}
+                      disabled={memberManagementLoading || memberManagementSubmitting}
+                    >
+                      {assignableManagedRoleKeys.map((roleKey) => (
+                        <option key={roleKey} value={roleKey}>
+                          {resolveManagedMemberRoleLabel(roleKey)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                ) : null}
+
+                <div className="home-member-management-actions">
+                  {canEditSelectedMember ? (
+                    <button
+                      type="button"
+                      className="home-primary-action"
+                      onClick={() => void saveManagedMemberProfile()}
+                      disabled={memberManagementLoading || memberManagementSubmitting || !memberManagementNameDraft.trim()}
+                    >
+                      {memberManagementSubmitting ? "Salvando..." : "Salvar alterações do membro"}
+                    </button>
+                  ) : null}
+
+                  {canManageSelectedMember ? (
+                    <button
+                      type="button"
+                      className="home-secondary-action compact"
+                      onClick={() => void setManagedMemberDisabledState(!memberManagementDisabled)}
+                      disabled={memberManagementLoading || memberManagementSubmitting || !memberManagementAuthExists}
+                    >
+                      {memberManagementDisabled ? "Reativar conta" : "Desativar conta"}
+                    </button>
+                  ) : null}
+
+                  {canManageSelectedMember ? (
+                    <button
+                      type="button"
+                      className="home-danger-action compact"
+                      onClick={() => void deleteManagedMemberAccount()}
+                      disabled={memberManagementLoading || memberManagementSubmitting}
+                    >
+                      <FiTrash2 size={15} />
+                      Apagar conta
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+
+              {memberManagementStatus ? <p className="home-member-management-status">{memberManagementStatus}</p> : null}
+            </div>
+          </article>
+        </section>
       ) : null}
 
       {showNotificationsModal ? (
