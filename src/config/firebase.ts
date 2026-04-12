@@ -20,6 +20,15 @@ const baseFirebaseConfig = {
   measurementId: "G-MPT7K3FKVL",
 };
 
+function normalizeStorageBucketName(value: string) {
+  return value
+    .trim()
+    .replace(/^gs:\/\//i, "")
+    .replace(/^https?:\/\/firebasestorage\.googleapis\.com\/v0\/b\//i, "")
+    .replace(/^https?:\/\/storage\.googleapis\.com\//i, "")
+    .replace(/\/.*$/, "");
+}
+
 function isPrivateNetworkHost(hostname: string) {
   if (
     hostname === "localhost" ||
@@ -52,11 +61,22 @@ const firebaseConfig = {
   authDomain: baseFirebaseConfig.authDomain,
 };
 
+export const firebaseStorageBuckets = Array.from(new Set([
+  normalizeStorageBucketName(baseFirebaseConfig.storageBucket),
+  `${baseFirebaseConfig.projectId}.appspot.com`,
+  `${baseFirebaseConfig.projectId}.firebasestorage.app`,
+].filter(Boolean)));
+
 export const firebaseApp = getApps().length ? getApp() : initializeApp(firebaseConfig);
 export const firebaseAuth = getAuth(firebaseApp);
 export const firestoreDb = getFirestore(firebaseApp);
 export const realtimeDb = getDatabase(firebaseApp);
-export const firebaseStorage = getStorage(firebaseApp);
+
+export function getFirebaseStorage(bucketName = firebaseStorageBuckets[0]) {
+  return getStorage(firebaseApp, `gs://${bucketName}`);
+}
+
+export const firebaseStorage = getFirebaseStorage();
 
 void setPersistence(firebaseAuth, browserLocalPersistence).catch(() => undefined);
 

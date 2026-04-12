@@ -13,6 +13,45 @@ service cloud.firestore {
 			return get(/databases/$(database)/documents/members/$(request.auth.uid));
 		}
 
+		function managementRole(profile) {
+			return profile.leadershipRole == 'Desenvolvedor'
+				? 'developer'
+				: profile.accountLevel == 'administration'
+					? 'admin'
+					: profile.leadershipRole == 'Maestro'
+						? 'maestro'
+						: profile.leadershipRole == 'Secretário'
+							? 'secretary'
+							: profile.leadershipRole == 'Vice-Secretário'
+								? 'vice-secretary'
+								: 'member';
+		}
+
+		function targetMember(userId) {
+			return get(/databases/$(database)/documents/members/$(userId));
+		}
+
+		function canManageRole(actorRole, targetRole, actorUid, targetUid) {
+			return actorUid != targetUid && (
+				actorRole == 'admin' ||
+				(actorRole == 'developer' && targetRole != 'admin') ||
+				(actorRole == 'maestro' && targetRole != 'admin' && targetRole != 'developer') ||
+				((actorRole == 'secretary' || actorRole == 'vice-secretary') &&
+					(targetRole == 'member' || targetRole == 'secretary' || targetRole == 'vice-secretary'))
+			);
+		}
+
+		function canManageMemberTarget(userId) {
+			return signedIn() &&
+				exists(/databases/$(database)/documents/members/$(userId)) &&
+				canManageRole(
+					managementRole(currentMember().data),
+					managementRole(targetMember(userId).data),
+					request.auth.uid,
+					userId
+				);
+		}
+
 		function isAdmin() {
 			return signedIn() && currentMember().data.accountLevel == 'administration';
 		}
@@ -221,6 +260,23 @@ service cloud.firestore {
 				request.resource.data.maritalStatus == resource.data.maritalStatus &&
 				request.resource.data.gender == resource.data.gender &&
 				request.resource.data.vocalRange == resource.data.vocalRange;
+		}
+
+		function managerKeepsMemberScopeUntouched() {
+			return request.resource.data.uid == resource.data.uid &&
+				request.resource.data.email == resource.data.email &&
+				request.resource.data.cep == resource.data.cep &&
+				request.resource.data.neighborhood == resource.data.neighborhood &&
+				request.resource.data.city == resource.data.city &&
+				request.resource.data.street == resource.data.street &&
+				request.resource.data.houseNumber == resource.data.houseNumber &&
+				request.resource.data.maritalStatus == resource.data.maritalStatus &&
+				request.resource.data.gender == resource.data.gender &&
+				request.resource.data.availability == resource.data.availability &&
+				request.resource.data.accountLevel == resource.data.accountLevel &&
+				request.resource.data.leadershipRole == resource.data.leadershipRole &&
+				request.resource.data.permissions == resource.data.permissions &&
+				request.resource.data.createdAt == resource.data.createdAt;
 		}
 
 		function hasValidDirectoryKeys() {
@@ -599,13 +655,17 @@ service cloud.firestore {
 					isAdmin() &&
 					hasCommonValidProfileData(userId) &&
 					request.resource.data.createdAt == resource.data.createdAt
+				) || (
+					canManageMemberTarget(userId) &&
+					hasCommonValidProfileData(userId) &&
+					managerKeepsMemberScopeUntouched()
 				);
 			allow delete: if isAdmin();
 		}
 
 		match /memberDirectory/{userId} {
 			allow get, list: if signedIn();
-			allow create, update: if (isOwner(userId) || isAdmin()) &&
+			allow create, update: if (isOwner(userId) || isAdmin() || canManageMemberTarget(userId)) &&
 				hasValidDirectoryData(userId) &&
 				directoryMatchesMemberProfile(userId);
 			allow delete: if isAdmin();

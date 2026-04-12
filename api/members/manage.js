@@ -1,4 +1,3 @@
-import crypto from "node:crypto";
 import admin from "firebase-admin";
 
 const GENERAL_PERMISSIONS = [
@@ -79,17 +78,36 @@ function getFirebaseAdminApp() {
       clientEmail,
       privateKey,
     }),
+    storageBucket: getStorageBucketName(),
   });
 }
 
+function normalizeStorageBucketName(value) {
+  return String(value || "")
+    .trim()
+    .replace(/^gs:\/\//i, "")
+    .replace(/^https?:\/\/firebasestorage\.googleapis\.com\/v0\/b\//i, "")
+    .replace(/^https?:\/\/storage\.googleapis\.com\//i, "")
+    .replace(/\/.*$/, "");
+}
+
+function getStorageBucketCandidates() {
+  const projectId = getRequiredEnv("FIREBASE_ADMIN_PROJECT_ID");
+
+  return Array.from(new Set([
+    process.env.FIREBASE_STORAGE_BUCKET,
+    process.env.VITE_FIREBASE_STORAGE_BUCKET,
+    process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
+    process.env.PUBLIC_FIREBASE_STORAGE_BUCKET,
+    `${projectId}.firebasestorage.app`,
+    `${projectId}.appspot.com`,
+  ]
+    .map(normalizeStorageBucketName)
+    .filter(Boolean)));
+}
+
 function getStorageBucketName() {
-  const explicitBucket = String(process.env.FIREBASE_STORAGE_BUCKET || "").trim();
-
-  if (explicitBucket) {
-    return explicitBucket;
-  }
-
-  return `${getRequiredEnv("FIREBASE_ADMIN_PROJECT_ID")}.appspot.com`;
+  return getStorageBucketCandidates()[0];
 }
 
 function normalizeAccessLevel(level) {
@@ -152,23 +170,17 @@ async function uploadManagedAvatar(userId, avatarSource) {
   }
 
   const { contentType, buffer } = parseDataUrl(trimmedSource);
-  const bucket = admin.storage().bucket(getStorageBucketName());
-  const objectPath = `avatars/${userId}/profile.jpg`;
-  const downloadToken = crypto.randomUUID();
-  const file = bucket.file(objectPath);
+  const maxAvatarBytes = 700000;
 
-  await file.save(buffer, {
-    resumable: false,
-    contentType,
-    metadata: {
-      contentType,
-      metadata: {
-        firebaseStorageDownloadTokens: downloadToken,
-      },
-    },
-  });
+  if (!contentType.startsWith("image/")) {
+    throw new Error("A imagem enviada para o membro é inválida.");
+  }
 
-  return `https://firebasestorage.googleapis.com/v0/b/${bucket.name}/o/${encodeURIComponent(objectPath)}?alt=media&token=${downloadToken}`;
+  if (buffer.byteLength > maxAvatarBytes) {
+    throw new Error("A foto do membro ficou grande demais para salvar. Use uma imagem menor.");
+  }
+
+  return trimmedSource;
 }
 
 function canManageTarget(actorRole, targetRole, actorUid, targetUid) {

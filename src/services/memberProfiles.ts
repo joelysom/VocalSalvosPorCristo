@@ -65,6 +65,12 @@ export type ManagedMemberProfileUpdate = {
   permissions: string[];
 };
 
+export type ManagedMemberProfileBasicsUpdate = {
+  name: string;
+  phone: string;
+  vocalRange: string;
+};
+
 export type OwnMemberProfileUpdate = {
   name: string;
   phone: string;
@@ -253,6 +259,26 @@ async function resolveAvatarDataUrl(userId: string, avatarSource: AvatarSource) 
   return uploadProfileAvatar(userId, compressedAvatar);
 }
 
+async function resolveManagedAvatarDataUrl(avatarSource: AvatarSource) {
+  if (!avatarSource) {
+    return "";
+  }
+
+  if (typeof avatarSource === "string") {
+    if (!avatarSource.trim()) {
+      return "";
+    }
+
+    if (avatarSource.startsWith("http://") || avatarSource.startsWith("https://")) {
+      return avatarSource;
+    }
+
+    return compressAvatarDataUrl(avatarSource);
+  }
+
+  return convertAvatarToDataUrl(avatarSource);
+}
+
 export async function saveMemberProfile(
   user: User,
   form: FormState,
@@ -435,6 +461,58 @@ export async function updateOwnMemberProfile(
   await syncAuthProfile(user, nextProfile.name, nextProfile.avatarDataUrl);
 
   return nextProfile;
+}
+
+export async function updateManagedMemberBasicProfile(
+  uid: string,
+  updates: ManagedMemberProfileBasicsUpdate,
+  currentDirectoryProfile: MemberDirectoryProfile,
+  avatarSource?: AvatarSource,
+) {
+  const memberReference = doc(firestoreDb, "members", uid);
+  let avatarDataUrl = currentDirectoryProfile.avatarDataUrl || "";
+
+  if (avatarSource) {
+    avatarDataUrl = await resolveManagedAvatarDataUrl(avatarSource);
+  }
+
+  const nextDirectoryProfile: MemberDirectoryProfile = {
+    ...currentDirectoryProfile,
+    uid,
+    name: updates.name.trim(),
+    phone: updates.phone.trim(),
+    phoneNormalized: normalizePhone(updates.phone),
+    vocalRange: updates.vocalRange.trim(),
+    avatarDataUrl,
+  };
+
+  await updateDoc(memberReference, {
+    name: nextDirectoryProfile.name,
+    phone: nextDirectoryProfile.phone,
+    phoneNormalized: nextDirectoryProfile.phoneNormalized,
+    vocalRange: nextDirectoryProfile.vocalRange,
+    avatarDataUrl: nextDirectoryProfile.avatarDataUrl,
+    updatedAt: firestoreServerTimestamp(),
+  });
+
+  await setDoc(
+    doc(firestoreDb, "memberDirectory", uid),
+    {
+      uid,
+      name: nextDirectoryProfile.name,
+      phone: nextDirectoryProfile.phone,
+      phoneNormalized: nextDirectoryProfile.phoneNormalized,
+      avatarDataUrl: nextDirectoryProfile.avatarDataUrl,
+      vocalRange: nextDirectoryProfile.vocalRange,
+      leadershipRole: currentDirectoryProfile.leadershipRole || "",
+      accountLevel: currentDirectoryProfile.accountLevel || "member",
+      availability: currentDirectoryProfile.availability || "",
+      updatedAt: firestoreServerTimestamp(),
+    },
+    { merge: true },
+  );
+
+  return nextDirectoryProfile;
 }
 
 export async function updateManagedMemberProfile(

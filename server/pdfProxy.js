@@ -4,8 +4,16 @@ const allowedPdfSources = [
     pathPrefix: "/v0/b/vocalsalvosporcristo-70e5f.firebasestorage.app/o/",
   },
   {
+    hostname: "firebasestorage.googleapis.com",
+    pathPrefix: "/v0/b/vocalsalvosporcristo-70e5f.appspot.com/o/",
+  },
+  {
     hostname: "storage.googleapis.com",
     pathPrefix: "/vocalsalvosporcristo-70e5f.firebasestorage.app/",
+  },
+  {
+    hostname: "storage.googleapis.com",
+    pathPrefix: "/vocalsalvosporcristo-70e5f.appspot.com/",
   },
 ];
 

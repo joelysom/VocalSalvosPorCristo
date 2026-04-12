@@ -9,6 +9,45 @@ service firebase.storage {
       return firestore.get(/databases/(default)/documents/members/$(request.auth.uid));
     }
 
+    function managementRole(memberData) {
+      return memberData.leadershipRole == 'Desenvolvedor'
+        ? 'developer'
+        : memberData.accountLevel == 'administration'
+          ? 'admin'
+          : memberData.leadershipRole == 'Maestro'
+            ? 'maestro'
+            : memberData.leadershipRole == 'Secretário'
+              ? 'secretary'
+              : memberData.leadershipRole == 'Vice-Secretário'
+                ? 'vice-secretary'
+                : 'member';
+    }
+
+    function targetMember(userId) {
+      return firestore.get(/databases/(default)/documents/members/$(userId));
+    }
+
+    function canManageRole(actorRole, targetRole, actorUid, targetUid) {
+      return actorUid != targetUid && (
+        actorRole == 'admin' ||
+        (actorRole == 'developer' && targetRole != 'admin') ||
+        (actorRole == 'maestro' && targetRole != 'admin' && targetRole != 'developer') ||
+        ((actorRole == 'secretary' || actorRole == 'vice-secretary') &&
+          (targetRole == 'member' || targetRole == 'secretary' || targetRole == 'vice-secretary'))
+      );
+    }
+
+    function canManageMemberAvatar(userId) {
+      return signedIn() &&
+        firestore.exists(/databases/(default)/documents/members/$(userId)) &&
+        canManageRole(
+          managementRole(currentMember().data),
+          managementRole(targetMember(userId).data),
+          request.auth.uid,
+          userId
+        );
+    }
+
     function isAdmin() {
       return signedIn() && currentMember().data.accountLevel == 'administration';
     }
@@ -131,10 +170,10 @@ service firebase.storage {
     match /avatars/{userId}/{fileName} {
       allow read: if signedIn();
       allow create, update: if signedIn() &&
-        request.auth.uid == userId &&
+        (request.auth.uid == userId || canManageMemberAvatar(userId)) &&
         isImageUpload() &&
         request.resource.size <= 5 * 1024 * 1024;
-      allow delete: if signedIn() && request.auth.uid == userId;
+      allow delete: if signedIn() && (request.auth.uid == userId || canManageMemberAvatar(userId));
     }
 
     match /posts/{postId}/{fileName} {

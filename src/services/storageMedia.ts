@@ -5,7 +5,7 @@ import {
   uploadBytes,
   uploadBytesResumable,
 } from "firebase/storage";
-import { firebaseStorage } from "../config/firebase";
+import { firebaseStorage, firebaseStorageBuckets, getFirebaseStorage } from "../config/firebase";
 
 export const MAX_SHARED_STORAGE_BYTES = 5 * 1024 * 1024 * 1024;
 
@@ -153,6 +153,23 @@ function shouldRetryUpload(error: unknown) {
     code === "storage/unknown" ||
     /ERR_HTTP2_PROTOCOL_ERROR|ERR_CONNECTION_(?:RESET|CLOSED)|network|timeout/i.test(message)
   );
+}
+
+function isBucketMissingError(error: unknown) {
+  if (!error || typeof error !== "object") {
+    return false;
+  }
+
+  const code = "code" in error && typeof error.code === "string" ? error.code : "";
+  const message = "message" in error && typeof error.message === "string" ? error.message : "";
+
+  return code === "storage/bucket-not-found" || /specified bucket does not exist/i.test(message);
+}
+
+function getStorageCandidates() {
+  return firebaseStorageBuckets.map((bucketName, index) => (
+    index === 0 ? firebaseStorage : getFirebaseStorage(bucketName)
+  ));
 }
 
 function createUploadTimeoutError(method: UploadMethod) {
@@ -322,12 +339,13 @@ async function materializeFileForUpload(file: File) {
 }
 
 async function performUpload(
+  storage: ReturnType<typeof getFirebaseStorage>,
   method: UploadMethod,
   path: string,
   data: Blob | Uint8Array | ArrayBuffer,
   metadata?: { contentType?: string },
 ) {
-  const storageReference = ref(firebaseStorage, path);
+  const storageReference = ref(storage, path);
 
   if (method === "simple") {
     const snapshot = await withUploadTimeout(uploadBytes(storageReference, data, metadata), method, data);
@@ -372,27 +390,37 @@ async function uploadBinaryToPath(
   let lastError: unknown = null;
   const uploadMethods = resolveUploadMethods(data);
 
-  for (const uploadMethod of uploadMethods) {
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      try {
-        return await performUpload(uploadMethod, path, data, metadata);
-      } catch (error) {
-        lastError = error;
+  for (const storage of getStorageCandidates()) {
+    for (const uploadMethod of uploadMethods) {
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          return await performUpload(storage, uploadMethod, path, data, metadata);
+        } catch (error) {
+          lastError = error;
 
-        if (attempt === 0 && shouldRetryUpload(error)) {
-          await waitForRetry(uploadMethod === "simple" ? 450 : 750);
-          continue;
+          if (attempt === 0 && shouldRetryUpload(error)) {
+            await waitForRetry(uploadMethod === "simple" ? 450 : 750);
+            continue;
+          }
+
+          break;
         }
+      }
 
+      if (isBucketMissingError(lastError)) {
         break;
       }
+
+      if (!shouldRetryUpload(lastError)) {
+        throw lastError;
+      }
+
+      await waitForRetry(250);
     }
 
-    if (!shouldRetryUpload(lastError)) {
-      throw lastError;
+    if (isBucketMissingError(lastError)) {
+      continue;
     }
-
-    await waitForRetry(250);
   }
 
   throw lastError;
@@ -473,7 +501,34 @@ export async function uploadSongAttachment(songId: string, attachmentType: "lyri
 export async function deleteStorageObjects(paths: string[]) {
   const uniquePaths = Array.from(new Set(paths.filter(Boolean)));
   const results = await Promise.allSettled(
-    uniquePaths.map((path) => deleteObject(ref(firebaseStorage, path))),
+    uniquePaths.map(async (path) => {
+      let lastError: unknown = null;
+
+      for (const storage of getStorageCandidates()) {
+        try {
+          await deleteObject(ref(storage, path));
+          return;
+        } catch (error) {
+          lastError = error;
+
+          const errorCode = (error as { code?: string } | undefined)?.code;
+
+          if (errorCode === "storage/object-not-found" || isBucketMissingError(error)) {
+            continue;
+          }
+
+          throw error;
+        }
+      }
+
+      const errorCode = (lastError as { code?: string } | undefined)?.code;
+
+      if (errorCode === "storage/object-not-found" || isBucketMissingError(lastError)) {
+        return;
+      }
+
+      throw lastError;
+    }),
   );
 
   const failedDeletes = results.filter((result) => {

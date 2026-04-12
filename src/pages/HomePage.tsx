@@ -35,6 +35,7 @@ import {
   ensureMemberDirectoryEntry,
   getMemberProfile,
   listMemberDirectoryProfiles,
+  updateManagedMemberBasicProfile,
   type MemberDirectoryProfile,
   type MemberProfile,
   type OwnMemberProfileUpdate,
@@ -2432,19 +2433,22 @@ export function HomePage({
       let successMessage = "Alterações do membro salvas com sucesso.";
 
       if (hasProfileChanges) {
-        const responsePayload = await callManagedMemberAction("update-profile", {
-          targetUid: selectedDirectoryMember.uid,
-          name: normalizedName,
-          phone: normalizedPhone,
-          vocalRange: normalizedVocalRange,
-          avatarDataUrl: memberManagementAvatarDataUrl ?? undefined,
-        });
+        const updatedMemberProfile = await updateManagedMemberBasicProfile(
+          selectedDirectoryMember.uid,
+          {
+            name: normalizedName,
+            phone: normalizedPhone,
+            vocalRange: normalizedVocalRange,
+          },
+          selectedDirectoryMember,
+          memberManagementAvatarDataUrl ?? undefined,
+        );
 
-        setMemberManagementNameDraft(responsePayload.target?.name || normalizedName);
-        setMemberManagementPhoneDraft(responsePayload.target?.phone || normalizedPhone);
-        setMemberManagementVocalRangeDraft(responsePayload.target?.vocalRange || normalizedVocalRange);
-        setMemberManagementAvatarPreview(responsePayload.target?.avatarDataUrl || managedMemberAvatar);
-        successMessage = responsePayload.message || "Dados do membro atualizados com sucesso.";
+        setMemberManagementNameDraft(updatedMemberProfile.name || normalizedName);
+        setMemberManagementPhoneDraft(updatedMemberProfile.phone || normalizedPhone);
+        setMemberManagementVocalRangeDraft(updatedMemberProfile.vocalRange || normalizedVocalRange);
+        setMemberManagementAvatarPreview(updatedMemberProfile.avatarDataUrl || managedMemberAvatar);
+        successMessage = "Dados do membro atualizados com sucesso.";
       }
 
       if (hasRoleChange) {
