@@ -4315,7 +4315,19 @@ export function HomePage({
               <FiArrowLeft size={16} />
               Voltar ao contato
             </button>
-            <span className="home-role-chip">Editor do membro</span>
+            <div className="home-member-screen-header-actions">
+              {canResetSelectedMemberPassword ? (
+                <button
+                  type="button"
+                  className="home-secondary-action compact"
+                  onClick={() => void resetManagedMemberPassword()}
+                  disabled={memberManagementLoading || memberManagementSubmitting}
+                >
+                  Redefinir senha
+                </button>
+              ) : null}
+              <span className="home-role-chip">Editor do membro</span>
+            </div>
           </div>
 
           <article className="home-post-detail-card home-member-screen-card">
@@ -4461,17 +4473,6 @@ export function HomePage({
                       disabled={memberManagementLoading || memberManagementSubmitting || !memberManagementAuthExists}
                     >
                       {memberManagementDisabled ? "Reativar conta" : "Desativar conta"}
-                    </button>
-                  ) : null}
-
-                  {canResetSelectedMemberPassword ? (
-                    <button
-                      type="button"
-                      className="home-secondary-action compact"
-                      onClick={() => void resetManagedMemberPassword()}
-                      disabled={memberManagementLoading || memberManagementSubmitting}
-                    >
-                      Redefinir senha
                     </button>
                   ) : null}
 
