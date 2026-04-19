@@ -22,6 +22,7 @@ import {
   type AccessLevel,
   normalizeAccessLevel,
   normalizePermissions,
+  resolveManagedMemberRoleKey,
 } from "../data/access";
 import { initialFormState } from "../data/mock";
 import type { FormErrors, FormState } from "../data/mock";
@@ -851,6 +852,52 @@ export default function PagesIndex() {
     }
   };
 
+  const handleResetMemberPassword = async (memberUid: string) => {
+    const currentUser = firebaseAuth.currentUser;
+
+    if (!currentUser) {
+      setAuthStatusMessage("A sessão administrativa não está ativa.");
+      return;
+    }
+
+    setAuthSubmitting(true);
+    setAuthStatusMessage("");
+
+    try {
+      const idToken = await currentUser.getIdToken();
+      const response = await fetch("/api/auth/password-reset", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({ targetUid: memberUid }),
+      });
+      const payload = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(
+          typeof payload.message === "string"
+            ? payload.message
+            : "Não foi possível enviar o link de redefinição agora.",
+        );
+      }
+
+      const message = typeof payload.message === "string"
+        ? payload.message
+        : "Link de redefinição enviado com sucesso.";
+
+      setAuthStatusMessage(message);
+      toast.success(message);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Não foi possível enviar o link de redefinição agora.";
+      setAuthStatusMessage(message);
+      toast.error(message);
+    } finally {
+      setAuthSubmitting(false);
+    }
+  };
+
   const handleManagedMemberSave = async (member: {
     uid: string;
     name: string;
@@ -888,9 +935,13 @@ export default function PagesIndex() {
 
   if (isAdminRoute && currentPage !== "register") {
     if (currentPage === "admin" && memberAccessLevel === "administration") {
+      const currentManagementRole = resolveManagedMemberRoleKey(memberAccessLevel, memberLeadershipRole);
+
       content = (
         <AdminDashboardPage
           adminName={memberName}
+          currentManagementRole={currentManagementRole}
+          currentUserUid={firebaseAuth.currentUser?.uid || ""}
           members={managedMembers}
           isLoading={adminMembersLoading}
           isSaving={authSubmitting}
@@ -898,6 +949,7 @@ export default function PagesIndex() {
           onRefresh={loadManagedMembers}
           onSaveMember={handleManagedMemberSave}
           onChangeAdminPassword={handleAdminPasswordChange}
+          onResetMemberPassword={handleResetMemberPassword}
           onSignOut={handleBackToAuth}
         />
       );

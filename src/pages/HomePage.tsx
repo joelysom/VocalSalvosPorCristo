@@ -28,7 +28,18 @@ import { AvatarEditorModal } from "../components/AvatarEditorModal";
 import { SongAudioPlayer } from "../components/SongAudioPlayer";
 import { SongDocumentViewer } from "../components/SongDocumentViewer";
 import { firebaseAuth } from "../config/firebase";
-import { type AccessLevel, normalizeAccessLevel, normalizePermissions } from "../data/access";
+import {
+  type AccessLevel,
+  type ManagedMemberRoleKey,
+  canEditManagedMemberTarget,
+  canManageManagedMemberTarget,
+  canResetManagedMemberPasswordTarget,
+  getAssignableManagedRoleKeys,
+  normalizeAccessLevel,
+  normalizePermissions,
+  resolveManagedMemberRoleKey,
+  resolveManagedMemberRoleLabel,
+} from "../data/access";
 import logoAd from "../img/Login/LogoAD.png";
 import {
   backfillMemberDirectoryFromMembers,
@@ -239,8 +250,6 @@ type MemberRoleVisual = {
   icon: React.ElementType;
   accentClassName: string;
 };
-
-type ManagedMemberRoleKey = "admin" | "developer" | "maestro" | "secretary" | "vice-secretary" | "member";
 
 function createId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -523,128 +532,6 @@ function describeSongPickerFile(file: File) {
     formatStorageBytes(file.size),
     file.type || "tipo não informado",
   ].join(" • ");
-}
-
-function resolveManagedMemberRoleKey(
-  accountLevel: string | AccessLevel | undefined,
-  leadershipRole: string | undefined,
-): ManagedMemberRoleKey {
-  if (leadershipRole === "Desenvolvedor") {
-    return "developer";
-  }
-
-  if (normalizeAccessLevel(accountLevel) === "administration") {
-    return "admin";
-  }
-
-  if (leadershipRole === "Maestro") {
-    return "maestro";
-  }
-
-  if (leadershipRole === "Secretário") {
-    return "secretary";
-  }
-
-  if (leadershipRole === "Vice-Secretário") {
-    return "vice-secretary";
-  }
-
-  return "member";
-}
-
-function resolveManagedMemberRoleLabel(roleKey: ManagedMemberRoleKey) {
-  switch (roleKey) {
-    case "admin":
-      return "Administrador do Vocal";
-    case "developer":
-      return "Desenvolvedor";
-    case "maestro":
-      return "Maestro";
-    case "secretary":
-      return "Secretário";
-    case "vice-secretary":
-      return "Vice-Secretário";
-    default:
-      return "Membro do vocal";
-  }
-}
-
-function canManageMemberTarget(
-  actorRole: ManagedMemberRoleKey,
-  targetRole: ManagedMemberRoleKey,
-  actorUid: string,
-  targetUid: string,
-) {
-  if (!actorUid || !targetUid || actorUid === targetUid) {
-    return false;
-  }
-
-  if (actorRole === "admin") {
-    return true;
-  }
-
-  if (actorRole === "developer") {
-    return targetRole !== "admin";
-  }
-
-  if (actorRole === "maestro") {
-    return targetRole !== "admin" && targetRole !== "developer";
-  }
-
-  if (actorRole === "secretary" || actorRole === "vice-secretary") {
-    return targetRole === "member" || targetRole === "secretary" || targetRole === "vice-secretary";
-  }
-
-  return false;
-}
-
-function canEditMemberTarget(
-  actorRole: ManagedMemberRoleKey,
-  targetRole: ManagedMemberRoleKey,
-  actorUid: string,
-  targetUid: string,
-) {
-  if (!actorUid || !targetUid || actorUid === targetUid) {
-    return false;
-  }
-
-  if (actorRole === "admin") {
-    return true;
-  }
-
-  if (actorRole === "developer") {
-    return targetRole !== "admin";
-  }
-
-  if (actorRole === "maestro") {
-    return targetRole !== "admin" && targetRole !== "developer";
-  }
-
-  if (actorRole === "secretary" || actorRole === "vice-secretary") {
-    return targetRole === "member" || targetRole === "secretary" || targetRole === "vice-secretary";
-  }
-
-  return false;
-}
-
-function getAssignableManagedRoleKeys(actorRole: ManagedMemberRoleKey) {
-  if (actorRole === "admin") {
-    return ["admin", "developer", "maestro", "secretary", "vice-secretary", "member"] satisfies ManagedMemberRoleKey[];
-  }
-
-  if (actorRole === "developer") {
-    return ["developer", "maestro", "secretary", "vice-secretary", "member"] satisfies ManagedMemberRoleKey[];
-  }
-
-  if (actorRole === "maestro") {
-    return ["maestro", "secretary", "vice-secretary", "member"] satisfies ManagedMemberRoleKey[];
-  }
-
-  if (actorRole === "secretary" || actorRole === "vice-secretary") {
-    return ["secretary", "vice-secretary", "member"] satisfies ManagedMemberRoleKey[];
-  }
-
-  return [] satisfies ManagedMemberRoleKey[];
 }
 
 function normalizeVoiceType(value: string): SongVoicePart | "" {
@@ -1340,13 +1227,19 @@ export function HomePage({
   const selectedMemberManagementRole = selectedDirectoryMember
     ? resolveManagedMemberRoleKey(selectedDirectoryMember.accountLevel, selectedDirectoryMember.leadershipRole)
     : "member";
-  const canEditSelectedMember = Boolean(selectedDirectoryMember) && canEditMemberTarget(
+  const canEditSelectedMember = Boolean(selectedDirectoryMember) && canEditManagedMemberTarget(
     currentManagementRole,
     selectedMemberManagementRole,
     currentUid,
     selectedDirectoryMember.uid,
   );
-  const canManageSelectedMember = Boolean(selectedDirectoryMember) && canManageMemberTarget(
+  const canManageSelectedMember = Boolean(selectedDirectoryMember) && canManageManagedMemberTarget(
+    currentManagementRole,
+    selectedMemberManagementRole,
+    currentUid,
+    selectedDirectoryMember.uid,
+  );
+  const canResetSelectedMemberPassword = Boolean(selectedDirectoryMember) && canResetManagedMemberPasswordTarget(
     currentManagementRole,
     selectedMemberManagementRole,
     currentUid,
@@ -2478,6 +2371,57 @@ export function HomePage({
         : "Não foi possível atualizar este membro agora.";
       setMemberManagementStatus(message);
       toast.error(message, { id: saveToastId });
+    } finally {
+      setMemberManagementSubmitting(false);
+    }
+  };
+
+  const resetManagedMemberPassword = async () => {
+    if (!selectedDirectoryMember || !canResetSelectedMemberPassword || !currentUser) {
+      return;
+    }
+
+    const confirmationMessage = `Redefinir a senha de ${selectedDirectoryMember.name}? Um e-mail de recuperação será enviado para essa conta.`;
+
+    if (!window.confirm(confirmationMessage)) {
+      return;
+    }
+
+    setMemberManagementSubmitting(true);
+    setMemberManagementStatus("Enviando link de redefinição...");
+
+    try {
+      const idToken = await currentUser.getIdToken();
+      const response = await fetch("/api/auth/password-reset", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({ targetUid: selectedDirectoryMember.uid }),
+      });
+      const payload = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(
+          typeof payload.message === "string"
+            ? payload.message
+            : "Não foi possível enviar o link de redefinição agora.",
+        );
+      }
+
+      const message = typeof payload.message === "string"
+        ? payload.message
+        : `Link de redefinição enviado para ${selectedDirectoryMember.name}.`;
+
+      setMemberManagementStatus(message);
+      toast.success(message);
+    } catch (error) {
+      const message = error instanceof Error
+        ? error.message
+        : "Não foi possível enviar o link de redefinição agora.";
+      setMemberManagementStatus(message);
+      toast.error(message);
     } finally {
       setMemberManagementSubmitting(false);
     }
@@ -4278,6 +4222,16 @@ export function HomePage({
                   Editar membro
                 </button>
               ) : null}
+              {canResetSelectedMemberPassword ? (
+                <button
+                  type="button"
+                  className="home-secondary-action compact"
+                  onClick={() => void resetManagedMemberPassword()}
+                  disabled={memberManagementLoading || memberManagementSubmitting}
+                >
+                  Redefinir senha
+                </button>
+              ) : null}
               <span className="home-role-chip">Contato interno</span>
             </div>
           </div>
@@ -4507,6 +4461,17 @@ export function HomePage({
                       disabled={memberManagementLoading || memberManagementSubmitting || !memberManagementAuthExists}
                     >
                       {memberManagementDisabled ? "Reativar conta" : "Desativar conta"}
+                    </button>
+                  ) : null}
+
+                  {canResetSelectedMemberPassword ? (
+                    <button
+                      type="button"
+                      className="home-secondary-action compact"
+                      onClick={() => void resetManagedMemberPassword()}
+                      disabled={memberManagementLoading || memberManagementSubmitting}
+                    >
+                      Redefinir senha
                     </button>
                   ) : null}
 

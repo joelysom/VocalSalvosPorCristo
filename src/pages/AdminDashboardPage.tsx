@@ -3,13 +3,16 @@ import { useMemo, useState } from "react";
 import {
   ADMINISTRATION_ROLES,
   ALL_PERMISSIONS,
+  canResetManagedMemberPasswordTarget,
   DIRECTION_ROLES,
   GENERAL_PERMISSIONS,
   MEMBER_PERMISSIONS,
   type AccessLevel,
+  type ManagedMemberRoleKey,
   normalizeAccessLevel,
   normalizePermissions,
   resolveDefaultPermissions,
+  resolveManagedMemberRoleKey,
 } from "../data/access";
 import type { ManagedMemberProfileUpdate, MemberProfile } from "../services/memberProfiles";
 
@@ -20,6 +23,8 @@ type EditableMember = ManagedMemberProfileUpdate & {
 
 type AdminDashboardPageProps = {
   adminName: string;
+  currentManagementRole: ManagedMemberRoleKey;
+  currentUserUid: string;
   members: MemberProfile[];
   isLoading: boolean;
   isSaving: boolean;
@@ -27,6 +32,7 @@ type AdminDashboardPageProps = {
   onRefresh: () => Promise<void> | void;
   onSaveMember: (member: EditableMember) => Promise<void> | void;
   onChangeAdminPassword: (nextPassword: string) => Promise<void> | void;
+  onResetMemberPassword: (memberUid: string) => Promise<void> | void;
   onSignOut: () => Promise<void> | void;
 };
 
@@ -55,6 +61,8 @@ function mapMemberToEditable(member: MemberProfile): EditableMember {
 
 export function AdminDashboardPage({
   adminName,
+  currentManagementRole,
+  currentUserUid,
   members,
   isLoading,
   isSaving,
@@ -62,6 +70,7 @@ export function AdminDashboardPage({
   onRefresh,
   onSaveMember,
   onChangeAdminPassword,
+  onResetMemberPassword,
   onSignOut,
 }: AdminDashboardPageProps) {
   const [query, setQuery] = useState("");
@@ -253,6 +262,13 @@ export function AdminDashboardPage({
               const permissionPool = member.accountLevel === "member"
                 ? MEMBER_PERMISSIONS
                 : Array.from(new Set([...GENERAL_PERMISSIONS, ...ALL_PERMISSIONS]));
+              const memberRole = resolveManagedMemberRoleKey(member.accountLevel, member.leadershipRole);
+              const canResetMemberPassword = canResetManagedMemberPasswordTarget(
+                currentManagementRole,
+                memberRole,
+                currentUserUid,
+                member.uid,
+              );
               const hasDraftChanges = hasMemberDraftChanges(member.uid);
 
               return (
@@ -262,22 +278,39 @@ export function AdminDashboardPage({
                       <h2>{member.name || "Conta sem nome"}</h2>
                       <p>{member.email}</p>
                     </div>
-                    <button
-                      type="button"
-                      className="admin-primary-btn"
-                      disabled={isSaving || !hasDraftChanges}
-                      onClick={async () => {
-                        await onSaveMember(member);
-                        setEditedMembers((current) => {
-                          const nextDrafts = { ...current };
-                          delete nextDrafts[member.uid];
-                          return nextDrafts;
-                        });
-                      }}
-                    >
-                      <Save size={16} strokeWidth={2.2} />
-                      {hasDraftChanges ? "Salvar alterações" : "Sem alterações"}
-                    </button>
+                    <div className="admin-member-topline-actions">
+                      {canResetMemberPassword ? (
+                        <button
+                          type="button"
+                          className="admin-secondary-btn"
+                          disabled={isSaving}
+                          onClick={() => {
+                            if (window.confirm(`Redefinir a senha de ${member.name || member.email}? Um e-mail de recuperação será enviado para a conta.`)) {
+                              void onResetMemberPassword(member.uid);
+                            }
+                          }}
+                        >
+                          <KeyRound size={16} strokeWidth={2.2} />
+                          Redefinir senha
+                        </button>
+                      ) : null}
+                      <button
+                        type="button"
+                        className="admin-primary-btn"
+                        disabled={isSaving || !hasDraftChanges}
+                        onClick={async () => {
+                          await onSaveMember(member);
+                          setEditedMembers((current) => {
+                            const nextDrafts = { ...current };
+                            delete nextDrafts[member.uid];
+                            return nextDrafts;
+                          });
+                        }}
+                      >
+                        <Save size={16} strokeWidth={2.2} />
+                        {hasDraftChanges ? "Salvar alterações" : "Sem alterações"}
+                      </button>
+                    </div>
                   </div>
 
                   <div className="admin-form-grid">

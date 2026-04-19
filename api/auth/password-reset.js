@@ -76,6 +76,63 @@ function isValidEmail(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
+function normalizeAccessLevel(level) {
+  return level === "administration" || level === "direction" ? level : "member";
+}
+
+function resolveManagedMemberRoleKey(profile) {
+  const accountLevel = normalizeAccessLevel(profile?.accountLevel);
+  const leadershipRole = String(profile?.leadershipRole || "").trim();
+
+  if (leadershipRole === "Desenvolvedor") {
+    return "developer";
+  }
+
+  if (accountLevel === "administration") {
+    return "admin";
+  }
+
+  if (leadershipRole === "Maestro") {
+    return "maestro";
+  }
+
+  if (leadershipRole === "Secretário") {
+    return "secretary";
+  }
+
+  if (leadershipRole === "Vice-Secretário") {
+    return "vice-secretary";
+  }
+
+  return "member";
+}
+
+function canResetManagedMemberPasswordTarget(actorRole, targetRole, actorUid, targetUid) {
+  if (!actorUid || !targetUid || actorUid === targetUid) {
+    return false;
+  }
+
+  if (actorRole === "admin" || actorRole === "developer") {
+    return true;
+  }
+
+  if (actorRole === "maestro") {
+    return targetRole !== "admin" && targetRole !== "developer";
+  }
+
+  return false;
+}
+
+function getBearerToken(request) {
+  const authorization = String(request.headers.authorization || "").trim();
+
+  if (!authorization.toLowerCase().startsWith("bearer ")) {
+    return "";
+  }
+
+  return authorization.slice(7).trim();
+}
+
 function resolveConfiguredAppBaseUrl() {
   const configuredUrl = String(process.env.APP_BASE_URL || "").trim();
 
@@ -130,6 +187,32 @@ async function createPasswordResetLink(auth, email) {
 
     throw error;
   }
+}
+
+async function sendResetEmail(auth, recipientEmail) {
+  const transporter = getTransporter();
+  const logoBuffer = await readFile(logoPath);
+  const resetLink = await createPasswordResetLink(auth, recipientEmail);
+
+  const fromName = process.env.SMTP_FROM_NAME || "Vocal Salvos por Cristo";
+  const fromEmail = getOptionalEnv("SMTP_FROM_EMAIL") || getRequiredEnv("SMTP_USER");
+  const replyTo = getOptionalEnv("SMTP_REPLY_TO") || fromEmail;
+
+  await transporter.sendMail({
+    from: `"${fromName}" <${fromEmail}>`,
+    to: recipientEmail,
+    replyTo,
+    subject: "Redefinir senha | Vocal Salvos por Cristo",
+    text: buildResetEmailText({ resetLink, recipientEmail }),
+    html: buildResetEmailHtml({ resetLink, recipientEmail }),
+    attachments: [
+      {
+        filename: "Login_Logo.png",
+        content: logoBuffer,
+        cid: "vocal-login-logo",
+      },
+    ],
+  });
 }
 
 async function hasResettableUser(auth, email) {
@@ -219,8 +302,15 @@ export default async function handler(req, res) {
   }
 
   const email = String(req.body?.email || "").trim().toLowerCase();
+  const targetUid = String(req.body?.targetUid || "").trim();
+  const token = getBearerToken(req);
 
-  if (!email) {
+  if (targetUid && !token) {
+    res.status(401).json({ message: "Autenticação obrigatória para redefinir a senha de outros membros." });
+    return;
+  }
+
+  if (!targetUid && !email) {
     res.status(400).json({
       field: "loginEmail",
       message: "Informe o e-mail cadastrado para redefinir a senha.",
@@ -228,7 +318,7 @@ export default async function handler(req, res) {
     return;
   }
 
-  if (!isValidEmail(email)) {
+  if (!targetUid && !isValidEmail(email)) {
     res.status(400).json({
       field: "loginEmail",
       message: "Use um e-mail válido para recuperar a senha.",
@@ -241,6 +331,54 @@ export default async function handler(req, res) {
 
     const auth = admin.auth();
 
+    if (targetUid) {
+      const decodedToken = await auth.verifyIdToken(token);
+      const firestore = admin.firestore();
+      const [actorSnapshot, targetSnapshot, targetAuthUser] = await Promise.all([
+        firestore.doc(`members/${decodedToken.uid}`).get(),
+        firestore.doc(`members/${targetUid}`).get(),
+        auth.getUser(targetUid).catch((error) => {
+          if (error?.code === "auth/user-not-found") {
+            return null;
+          }
+
+          throw error;
+        }),
+      ]);
+
+      if (!actorSnapshot.exists) {
+        res.status(403).json({ message: "Seu perfil não foi encontrado para validar essa ação." });
+        return;
+      }
+
+      if (!targetSnapshot.exists || !targetAuthUser) {
+        res.status(404).json({ message: "O membro selecionado não foi encontrado." });
+        return;
+      }
+
+      const actorRole = resolveManagedMemberRoleKey(actorSnapshot.data());
+      const targetRole = resolveManagedMemberRoleKey(targetSnapshot.data());
+
+      if (!canResetManagedMemberPasswordTarget(actorRole, targetRole, decodedToken.uid, targetUid)) {
+        res.status(403).json({ message: "Seu cargo não pode redefinir a senha desse membro." });
+        return;
+      }
+
+      const recipientEmail = String(targetAuthUser.email || targetSnapshot.data()?.email || "").trim().toLowerCase();
+
+      if (!recipientEmail || !isValidEmail(recipientEmail)) {
+        res.status(404).json({ message: "Não foi possível localizar um e-mail válido para este membro." });
+        return;
+      }
+
+      await sendResetEmail(auth, recipientEmail);
+
+      res.status(200).json({
+        message: `Link de redefinição enviado para ${String(targetSnapshot.data()?.name || "o membro selecionado")}.`,
+      });
+      return;
+    }
+
     if (!(await hasResettableUser(auth, email))) {
       res.status(200).json({
         message: "Se o e-mail estiver cadastrado, enviaremos um link de redefinição em instantes.",
@@ -248,29 +386,7 @@ export default async function handler(req, res) {
       return;
     }
 
-    const transporter = getTransporter();
-    const logoBuffer = await readFile(logoPath);
-    const resetLink = await createPasswordResetLink(auth, email);
-
-    const fromName = process.env.SMTP_FROM_NAME || "Vocal Salvos por Cristo";
-    const fromEmail = getOptionalEnv("SMTP_FROM_EMAIL") || getRequiredEnv("SMTP_USER");
-    const replyTo = getOptionalEnv("SMTP_REPLY_TO") || fromEmail;
-
-    await transporter.sendMail({
-      from: `"${fromName}" <${fromEmail}>`,
-      to: email,
-      replyTo,
-      subject: "Redefinir senha | Vocal Salvos por Cristo",
-      text: buildResetEmailText({ resetLink, recipientEmail: email }),
-      html: buildResetEmailHtml({ resetLink, recipientEmail: email }),
-      attachments: [
-        {
-          filename: "Login_Logo.png",
-          content: logoBuffer,
-          cid: "vocal-login-logo",
-        },
-      ],
-    });
+    await sendResetEmail(auth, email);
 
     res.status(200).json({
       message: "Se o e-mail estiver cadastrado, enviaremos um link de redefinição em instantes.",
@@ -278,7 +394,12 @@ export default async function handler(req, res) {
   } catch (error) {
     const code = error?.code || "";
 
-    if (code === "auth/user-not-found") {
+    if (targetUid && code === "auth/user-not-found") {
+      res.status(404).json({ message: "O membro selecionado não foi encontrado." });
+      return;
+    }
+
+    if (!targetUid && code === "auth/user-not-found") {
       res.status(200).json({
         message: "Se o e-mail estiver cadastrado, enviaremos um link de redefinição em instantes.",
       });

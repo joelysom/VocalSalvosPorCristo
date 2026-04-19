@@ -4227,6 +4227,14 @@ select {
   gap: 10px;
 }
 
+.admin-member-topline-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
 .admin-password-card,
 .admin-members-panel {
   margin-top: 18px;
