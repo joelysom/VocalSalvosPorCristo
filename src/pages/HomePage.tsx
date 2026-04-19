@@ -912,6 +912,7 @@ export function HomePage({
   const [memberManagementAvatarDataUrl, setMemberManagementAvatarDataUrl] = useState<string | null>(null);
   const [memberManagementAvatarEditorSource, setMemberManagementAvatarEditorSource] = useState("");
   const [memberManagementRoleDraft, setMemberManagementRoleDraft] = useState<ManagedMemberRoleKey>("member");
+  const [memberManagementPasswordDraft, setMemberManagementPasswordDraft] = useState("");
   const [memberManagementLoading, setMemberManagementLoading] = useState(false);
   const [memberManagementSubmitting, setMemberManagementSubmitting] = useState(false);
   const [memberManagementDisabled, setMemberManagementDisabled] = useState(false);
@@ -1424,6 +1425,7 @@ export function HomePage({
     setMemberManagementAvatarPreview(selectedDirectoryMember.avatarDataUrl || "");
     setMemberManagementAvatarDataUrl(null);
     setMemberManagementAvatarEditorSource("");
+    setMemberManagementPasswordDraft("");
     setMemberManagementStatus("");
     setMemberManagementEmail("");
     setMemberManagementDisabled(false);
@@ -1691,6 +1693,7 @@ export function HomePage({
     setMemberManagementAvatarDataUrl(null);
     setMemberManagementAvatarEditorSource("");
     setMemberManagementRoleDraft("member");
+    setMemberManagementPasswordDraft("");
     setMemberManagementLoading(false);
     setMemberManagementSubmitting(false);
     setMemberManagementDisabled(false);
@@ -2244,7 +2247,7 @@ export function HomePage({
   };
 
   const callManagedMemberAction = async (
-    action: "inspect" | "update-profile" | "update-role" | "set-disabled" | "delete-account",
+    action: "inspect" | "update-profile" | "update-role" | "update-password" | "set-disabled" | "delete-account",
     payload: Record<string, unknown>,
   ) => {
     if (!currentUser) {
@@ -2371,6 +2374,50 @@ export function HomePage({
         : "Não foi possível atualizar este membro agora.";
       setMemberManagementStatus(message);
       toast.error(message, { id: saveToastId });
+    } finally {
+      setMemberManagementSubmitting(false);
+    }
+  };
+
+  const changeManagedMemberPassword = async () => {
+    if (!selectedDirectoryMember || !canManageSelectedMember || !memberManagementAuthExists) {
+      return;
+    }
+
+    const nextPassword = memberManagementPasswordDraft.trim();
+
+    if (nextPassword.length < 6) {
+      const message = "A senha precisa ter pelo menos 6 caracteres.";
+      setMemberManagementStatus(message);
+      toast.error(message);
+      return;
+    }
+
+    const confirmationMessage = `Alterar a senha de ${selectedDirectoryMember.name}? A conta passará a usar a nova senha imediatamente.`;
+
+    if (!window.confirm(confirmationMessage)) {
+      return;
+    }
+
+    setMemberManagementSubmitting(true);
+    setMemberManagementStatus("Atualizando senha da conta...");
+
+    try {
+      const responsePayload = await callManagedMemberAction("update-password", {
+        targetUid: selectedDirectoryMember.uid,
+        nextPassword,
+      });
+
+      setMemberManagementPasswordDraft("");
+      const message = responsePayload.message || "Senha atualizada com sucesso.";
+      setMemberManagementStatus(message);
+      toast.success(message);
+    } catch (error) {
+      const message = error instanceof Error
+        ? error.message
+        : "Não foi possível atualizar a senha agora.";
+      setMemberManagementStatus(message);
+      toast.error(message);
     } finally {
       setMemberManagementSubmitting(false);
     }
@@ -4435,6 +4482,37 @@ export function HomePage({
                     ))}
                   </select>
                 </label>
+
+                {canManageSelectedMember ? (
+                  <label className="home-member-management-field">
+                    <span>Nova senha da conta</span>
+                    <input
+                      type="password"
+                      value={memberManagementPasswordDraft}
+                      onChange={(event) => setMemberManagementPasswordDraft(event.target.value)}
+                      placeholder="Mínimo de 6 caracteres"
+                      disabled={memberManagementLoading || memberManagementSubmitting || !memberManagementAuthExists}
+                    />
+                  </label>
+                ) : null}
+
+                {canManageSelectedMember ? (
+                  <div className="home-member-management-actions">
+                    <button
+                      type="button"
+                      className="home-secondary-action compact"
+                      onClick={() => void changeManagedMemberPassword()}
+                      disabled={
+                        memberManagementLoading ||
+                        memberManagementSubmitting ||
+                        !memberManagementAuthExists ||
+                        memberManagementPasswordDraft.trim().length < 6
+                      }
+                    >
+                      Alterar senha
+                    </button>
+                  </div>
+                ) : null}
 
                 {canEditSelectedMember ? (
                   <label className="home-member-management-field">

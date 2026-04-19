@@ -473,6 +473,27 @@ export default async function handler(req, res) {
       return;
     }
 
+    if (action === "update-password") {
+      const nextPassword = String(body.nextPassword || "").trim();
+
+      if (nextPassword.length < 6) {
+        res.status(400).json({ message: "A senha precisa ter pelo menos 6 caracteres." });
+        return;
+      }
+
+      await admin.auth().updateUser(targetUid, { password: nextPassword });
+      await admin.auth().revokeRefreshTokens(targetUid).catch(() => undefined);
+
+      res.status(200).json({
+        message: "Senha atualizada com sucesso.",
+        target: {
+          uid: targetUid,
+          passwordUpdated: true,
+        },
+      });
+      return;
+    }
+
     if (action === "set-disabled") {
       const disabled = Boolean(body.disabled);
 
