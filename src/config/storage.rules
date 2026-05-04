@@ -27,6 +27,16 @@ service firebase.storage {
       return firestore.get(/databases/(default)/documents/members/$(userId));
     }
 
+    function songLibraryItem(songId) {
+      return firestore.get(/databases/(default)/documents/songLibrary/$(songId));
+    }
+
+    function isSongOwner(songId) {
+      return signedIn() &&
+        firestore.exists(/databases/(default)/documents/songLibrary/$(songId)) &&
+        songLibraryItem(songId).data.createdByUid == request.auth.uid;
+    }
+
     function canManageRole(actorRole, targetRole, actorUid, targetUid) {
       return actorUid != targetUid && (
         actorRole == 'admin' ||
@@ -186,20 +196,20 @@ service firebase.storage {
     }
 
     match /songs/{songId}/voices/{voiceType}/{fileName} {
-      allow read: if canViewAllSongMedia() || (signedIn() && voiceFolderMatchesMember(voiceType));
-      allow create, update: if canManageSongMedia() &&
+      allow read: if canViewAllSongMedia() || isSongOwner(songId) || (signedIn() && voiceFolderMatchesMember(voiceType));
+      allow create, update: if (canManageSongMedia() || isSongOwner(songId)) &&
         isAudioUpload() &&
         request.resource.size <= 80 * 1024 * 1024;
-      allow delete: if canDeleteManagedMedia();
+      allow delete: if canDeleteManagedMedia() || isSongOwner(songId);
     }
 
     match /songs/{songId}/{attachmentType}/{fileName} {
-      allow read: if signedIn() && attachmentType in ['lyrics', 'score'];
-      allow create, update: if canManageSongMedia() &&
+      allow read: if (signedIn() && attachmentType in ['lyrics', 'score']) || canViewAllSongMedia() || isSongOwner(songId);
+      allow create, update: if (canManageSongMedia() || isSongOwner(songId)) &&
         attachmentType in ['lyrics', 'score'] &&
         isPdfOrImageUpload() &&
         request.resource.size <= 25 * 1024 * 1024;
-      allow delete: if canDeleteManagedMedia();
+      allow delete: if canDeleteManagedMedia() || isSongOwner(songId);
     }
 
     match /{allPaths=**} {

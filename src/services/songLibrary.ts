@@ -5,6 +5,7 @@ import {
   getDocs,
   serverTimestamp,
   setDoc,
+  updateDoc,
 } from "firebase/firestore";
 import { firestoreDb } from "../config/firebase";
 import type { StoredFileRecord } from "./storageMedia";
@@ -61,6 +62,10 @@ export type CreateSongLibraryInput = {
   scoreFile: SongAttachmentRecord | null;
 };
 
+export type UpdateSongLibraryInput = Omit<CreateSongLibraryInput, "id"> & {
+  createdAt: unknown;
+};
+
 function getSongLibraryCollection() {
   return collection(firestoreDb, "songLibrary");
 }
@@ -83,18 +88,13 @@ function resolveTimestampValue(value: unknown) {
   return 0;
 }
 
-export async function listSongLibrary() {
-  const snapshot = await getDocs(getSongLibraryCollection());
-
-  return snapshot.docs
-    .map((document) => document.data() as SongLibraryRecord)
-    .sort((left, right) => resolveTimestampValue(right.createdAt) - resolveTimestampValue(left.createdAt));
-}
-
-export async function createSongLibraryItem(input: CreateSongLibraryInput) {
-  const songReference = input.id ? doc(getSongLibraryCollection(), input.id) : doc(getSongLibraryCollection());
-  const payload: SongLibraryRecord = {
-    id: songReference.id,
+function buildSongLibraryPayload(
+  songId: string,
+  input: Omit<CreateSongLibraryInput, "id">,
+  createdAt: unknown,
+) {
+  return {
+    id: songId,
     title: input.title,
     artist: input.artist,
     tone: input.tone,
@@ -106,7 +106,21 @@ export async function createSongLibraryItem(input: CreateSongLibraryInput) {
     voiceAssets: input.voiceAssets,
     lyricFile: input.lyricFile,
     scoreFile: input.scoreFile,
-  };
+    createdAt,
+  } satisfies SongLibraryRecord;
+}
+
+export async function listSongLibrary() {
+  const snapshot = await getDocs(getSongLibraryCollection());
+
+  return snapshot.docs
+    .map((document) => document.data() as SongLibraryRecord)
+    .sort((left, right) => resolveTimestampValue(right.createdAt) - resolveTimestampValue(left.createdAt));
+}
+
+export async function createSongLibraryItem(input: CreateSongLibraryInput) {
+  const songReference = input.id ? doc(getSongLibraryCollection(), input.id) : doc(getSongLibraryCollection());
+  const payload = buildSongLibraryPayload(songReference.id, input, new Date());
 
   await setDoc(songReference, {
     ...payload,
@@ -117,6 +131,21 @@ export async function createSongLibraryItem(input: CreateSongLibraryInput) {
   return {
     ...payload,
     createdAt: new Date(),
+    updatedAt: new Date(),
+  } satisfies SongLibraryRecord;
+}
+
+export async function updateSongLibraryItem(songId: string, input: UpdateSongLibraryInput) {
+  const songReference = doc(getSongLibraryCollection(), songId);
+  const payload = buildSongLibraryPayload(songId, input, input.createdAt);
+
+  await updateDoc(songReference, {
+    ...payload,
+    updatedAt: serverTimestamp(),
+  });
+
+  return {
+    ...payload,
     updatedAt: new Date(),
   } satisfies SongLibraryRecord;
 }

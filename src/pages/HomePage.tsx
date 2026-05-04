@@ -6,6 +6,8 @@ import {
   FiCamera,
   FiClipboard,
   FiCopy,
+  FiDownload,
+  FiEdit2,
   FiEye,
   FiFileText,
   FiHelpCircle,
@@ -76,6 +78,7 @@ import {
   type SongLibraryRecord,
   type SongVoiceAssetRecord,
   type SongVoicePart,
+  updateSongLibraryItem,
 } from "../services/songLibrary";
 import {
   deleteStorageObjects,
@@ -148,6 +151,9 @@ type SongLibraryItem = {
   voiceAssets: SongVoiceAssetRecord[];
   lyricFile: SongAttachmentRecord | null;
   scoreFile: SongAttachmentRecord | null;
+  createdByUid: string;
+  createdAt?: unknown;
+  updatedAt?: unknown;
   createdAtValue: number;
   updatedAtValue: number;
 };
@@ -178,6 +184,23 @@ type AgendaNotificationItem = {
   detail: string;
   changeType: "new" | "updated";
   createdAtValue: number;
+};
+
+type ComposerDraft = {
+  category: string;
+  title: string;
+  content: string;
+  date: string;
+  time: string;
+  location: string;
+  imageUrl: string;
+  expirationDays: string;
+  kind: string;
+  artist: string;
+  tone: string;
+  sourceUrl: string;
+  songCategory: string;
+  customSongCategory: string;
 };
 
 const initialPosts: FeedPost[] = [];
@@ -243,6 +266,7 @@ const memberVocalRangeOptions = [
   "Barítono",
   "Baixo",
 ];
+const SONG_CATEGORY_OPTIONS = ["Clássicos", "Culto", "Ensaio", "Especial", "Outra"] as const;
 
 type MemberRoleVisual = {
   label: string;
@@ -253,6 +277,55 @@ type MemberRoleVisual = {
 
 function createId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function createSongComposerDraft(song?: SongLibraryItem | null): ComposerDraft {
+  const songCategory = song?.category || "Clássicos";
+  const isKnownCategory = SONG_CATEGORY_OPTIONS.includes(songCategory as (typeof SONG_CATEGORY_OPTIONS)[number]);
+
+  return {
+    category: "Aviso",
+    title: song?.title || "",
+    content: song?.notes || "",
+    date: "",
+    time: "",
+    location: "",
+    imageUrl: "",
+    expirationDays: "0",
+    kind: "Ensaio",
+    artist: song?.artist || "",
+    tone: song?.tone || "",
+    sourceUrl: song?.referenceUrl || "",
+    songCategory: isKnownCategory ? songCategory : "Outra",
+    customSongCategory: isKnownCategory ? "" : songCategory,
+  };
+}
+
+async function downloadRemoteFile(fileUrl: string, fileName: string) {
+  if (typeof window === "undefined" || typeof document === "undefined" || !fileUrl) {
+    return;
+  }
+
+  const response = await fetch(fileUrl);
+
+  if (!response.ok) {
+    throw new Error("Não foi possível baixar o arquivo agora.");
+  }
+
+  const blob = await response.blob();
+  const objectUrl = window.URL.createObjectURL(blob);
+
+  try {
+    const link = document.createElement("a");
+    link.href = objectUrl;
+    link.download = fileName || "arquivo";
+    link.rel = "noreferrer";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  } finally {
+    window.URL.revokeObjectURL(objectUrl);
+  }
 }
 
 function getFirstName(fullName: string) {
@@ -802,6 +875,9 @@ function mapSongLibraryRecord(song: SongLibraryRecord): SongLibraryItem {
     voiceAssets: Array.isArray(song.voiceAssets) ? song.voiceAssets : [],
     lyricFile: song.lyricFile || null,
     scoreFile: song.scoreFile || null,
+    createdByUid: song.createdByUid,
+    createdAt: song.createdAt,
+    updatedAt: song.updatedAt,
     createdAtValue: resolveTimestampMillis(song.createdAt),
     updatedAtValue: resolveTimestampMillis(song.updatedAt),
   };
@@ -932,22 +1008,8 @@ export function HomePage({
   const [selectedSongDocumentKind, setSelectedSongDocumentKind] = useState<"lyrics" | "score">("lyrics");
   const [isSongDocumentExpanded, setIsSongDocumentExpanded] = useState(false);
   const [songPickerDebug, setSongPickerDebug] = useState("");
-  const [composerDraft, setComposerDraft] = useState({
-    category: "Aviso",
-    title: "",
-    content: "",
-    date: "",
-    time: "",
-    location: "",
-    imageUrl: "",
-    expirationDays: "0",
-    kind: "Ensaio",
-    artist: "",
-    tone: "",
-    sourceUrl: "",
-    songCategory: "Clássicos",
-    customSongCategory: "",
-  });
+  const [songEditTarget, setSongEditTarget] = useState<SongLibraryItem | null>(null);
+  const [composerDraft, setComposerDraft] = useState<ComposerDraft>(() => createSongComposerDraft());
   const [postMediaFiles, setPostMediaFiles] = useState<File[]>([]);
   const [postMediaPreviews, setPostMediaPreviews] = useState<ComposerMediaPreview[]>([]);
   const [songVoiceFiles, setSongVoiceFiles] = useState<SongVoiceUploadMap>({});
@@ -1008,6 +1070,10 @@ export function HomePage({
     resolvedLeadershipRole === "Desenvolvedor" ||
     resolvedLeadershipRole === "Maestro" ||
     resolvedLeadershipRole === "Secretário";
+  const canDownloadSongMedia =
+    resolvedAccessLevel === "administration" ||
+    resolvedLeadershipRole === "Desenvolvedor" ||
+    resolvedLeadershipRole === "Maestro";
   const currentManagementRole = resolveManagedMemberRoleKey(resolvedAccessLevel, resolvedLeadershipRole);
   const canRemoveManagedContent =
     resolvedAccessLevel === "administration" ||
@@ -1224,6 +1290,7 @@ export function HomePage({
     filteredDirectoryMembers.find((member) => member.uid === selectedDirectoryUid) || null;
   const activePost = posts.find((post) => post.id === activePostId) || null;
   const activeSong = songs.find((song) => song.id === activeSongId) || null;
+  const canEditActiveSong = Boolean(activeSong) && activeSong.createdByUid === currentUid;
   const currentVoicePart = normalizeVoiceType(resolvedVocalRange);
   const selectedMemberManagementRole = selectedDirectoryMember
     ? resolveManagedMemberRoleKey(selectedDirectoryMember.accountLevel, selectedDirectoryMember.leadershipRole)
@@ -1711,6 +1778,24 @@ export function HomePage({
     setShowComposer(false);
     clearPostMediaSelection();
     resetSongUploadSelection();
+    setSongEditTarget(null);
+  };
+
+  const openSongComposer = (song?: SongLibraryItem | null) => {
+    if (song && song.createdByUid !== currentUid) {
+      setSongStatus("Você só pode editar as músicas que enviou.");
+      return;
+    }
+
+    setActiveProfileScreen(null);
+    setActiveMemberScreen(null);
+    setComposerMode("song");
+    setSongEditTarget(song || null);
+    setComposerDraft(createSongComposerDraft(song || null));
+    clearPostMediaSelection();
+    resetSongUploadSelection();
+    setSongStatus("");
+    setShowComposer(true);
   };
 
   const openPostDetail = (postId: string) => {
@@ -1782,7 +1867,8 @@ export function HomePage({
     setActiveProfileScreen(null);
     setActiveMemberScreen(null);
     if (activeTab === "songs" && canManageSongs) {
-      setComposerMode("song");
+      openSongComposer();
+      return;
     } else if (activeTab === "agenda" && canManageAgenda) {
       setComposerMode("agenda");
     } else if (canPost) {
@@ -1878,15 +1964,23 @@ export function HomePage({
     }
 
     if (composerMode === "song") {
+      const existingSong = songEditTarget;
+      const isSongEdit = Boolean(existingSong);
+
       if (!currentUid) {
         setSongStatus("Não foi possível identificar sua sessão para salvar a música.");
+        return;
+      }
+
+      if (existingSong && existingSong.createdByUid !== currentUid) {
+        setSongStatus("Você só pode editar as músicas que enviou.");
         return;
       }
 
       const normalizedTitle = composerDraft.title.trim();
 
       if (!normalizedTitle) {
-        setSongStatus("Informe o nome da música para adicionar ao repertório.");
+        setSongStatus(isSongEdit ? "Informe o nome da música para salvar." : "Informe o nome da música para adicionar ao repertório.");
         return;
       }
 
@@ -1895,36 +1989,66 @@ export function HomePage({
         return Boolean(file);
       });
 
-      if (voiceFileEntries.length === 0 && !songLyricFile && !songScoreFile && !composerDraft.sourceUrl.trim()) {
+      const hasNewMedia =
+        voiceFileEntries.length > 0 ||
+        Boolean(songLyricFile) ||
+        Boolean(songScoreFile) ||
+        Boolean(composerDraft.sourceUrl.trim());
+
+      if (!isSongEdit && !hasNewMedia) {
         setSongStatus("Envie ao menos um arquivo por voz, a letra, a partitura ou um link de apoio.");
         return;
       }
 
-      const uploadBytesTotal = voiceFileEntries.reduce((total, [, file]) => total + file.size, 0) + (songLyricFile?.size || 0) + (songScoreFile?.size || 0);
+      const existingVoiceAssetsByType = new Map(
+        (existingSong?.voiceAssets || []).map((asset) => [asset.voiceType, asset] as const),
+      );
+      const replacedVoiceBytes = voiceFileEntries.reduce((total, [voiceType]) => {
+        const existingAsset = existingVoiceAssetsByType.get(voiceType);
+        return total + (existingAsset?.sizeBytes || 0);
+      }, 0);
+      const replacedDocumentBytes =
+        (songLyricFile && existingSong?.lyricFile ? existingSong.lyricFile.sizeBytes : 0) +
+        (songScoreFile && existingSong?.scoreFile ? existingSong.scoreFile.sizeBytes : 0);
+      const uploadBytesTotal =
+        voiceFileEntries.reduce((total, [, file]) => total + file.size, 0) +
+        (songLyricFile?.size || 0) +
+        (songScoreFile?.size || 0);
 
-      if (sharedStorageUsedBytes + uploadBytesTotal > MAX_SHARED_STORAGE_BYTES) {
+      if (sharedStorageUsedBytes - replacedVoiceBytes - replacedDocumentBytes + uploadBytesTotal > MAX_SHARED_STORAGE_BYTES) {
         setSongStatus("Esse envio ultrapassa o limite configurado de 5 GB do storage compartilhado.");
         return;
       }
 
       setComposerSubmitting(true);
-      setSongStatus("Enviando arquivos da música para o Storage...");
-      const songUploadToastId = toast.loading("Enviando arquivos da música...");
+      setSongStatus(isSongEdit ? "Atualizando arquivos da música..." : "Enviando arquivos da música para o Storage...");
+      const songUploadToastId = toast.loading(isSongEdit ? "Atualizando música..." : "Enviando arquivos da música...");
 
-      const songId = createId("song");
+      const songId = existingSong?.id || createId("song");
       const uploadedPaths: string[] = [];
-      let songCreated = false;
+      const replacedPaths = new Set<string>();
+      let songSaved = false;
 
       try {
-        const voiceAssets: SongVoiceAssetRecord[] = [];
+        const voiceAssetsByType = new Map<SongVoicePart, SongVoiceAssetRecord>();
+
+        for (const asset of existingSong?.voiceAssets || []) {
+          voiceAssetsByType.set(asset.voiceType, asset);
+        }
 
         for (const [voiceType, file] of voiceFileEntries) {
           const asset = await uploadSongVoiceFile(songId, voiceType, file);
           uploadedPaths.push(asset.path);
-          voiceAssets.push({
+          voiceAssetsByType.set(voiceType, {
             ...asset,
             voiceType,
           });
+
+          for (const existingAsset of existingSong?.voiceAssets || []) {
+            if (existingAsset.voiceType === voiceType) {
+              replacedPaths.add(existingAsset.path);
+            }
+          }
         }
 
         const lyricFile = songLyricFile
@@ -1932,10 +2056,16 @@ export function HomePage({
               ...(await uploadSongAttachment(songId, "lyrics", songLyricFile)),
               attachmentType: "lyrics",
             }
-          : null;
+          : existingSong?.lyricFile || null;
 
         if (lyricFile) {
-          uploadedPaths.push(lyricFile.path);
+          if (songLyricFile) {
+            uploadedPaths.push(lyricFile.path);
+          }
+
+          if (songLyricFile && existingSong?.lyricFile) {
+            replacedPaths.add(existingSong.lyricFile.path);
+          }
         }
 
         const scoreFile = songScoreFile
@@ -1943,36 +2073,61 @@ export function HomePage({
               ...(await uploadSongAttachment(songId, "score", songScoreFile)),
               attachmentType: "score",
             }
-          : null;
+          : existingSong?.scoreFile || null;
 
         if (scoreFile) {
-          uploadedPaths.push(scoreFile.path);
+          if (songScoreFile) {
+            uploadedPaths.push(scoreFile.path);
+          }
+
+          if (songScoreFile && existingSong?.scoreFile) {
+            replacedPaths.add(existingSong.scoreFile.path);
+          }
         }
 
-        const createdSong = await createSongLibraryItem({
+        const voiceAssets = SONG_VOICE_PARTS.flatMap((voiceType) => {
+          const asset = voiceAssetsByType.get(voiceType);
+          return asset ? [asset] : [];
+        });
+
+        const songPayload = {
           id: songId,
           title: normalizedTitle,
           artist: composerDraft.artist.trim(),
           tone: composerDraft.tone.trim(),
           category: composerDraft.customSongCategory.trim() || composerDraft.songCategory || "Clássicos",
           notes: composerDraft.content.trim(),
-          addedBy: resolvedName,
-          createdByUid: currentUid,
+          addedBy: existingSong?.addedBy || resolvedName,
+          createdByUid: existingSong?.createdByUid || currentUid,
           referenceUrl: normalizeExternalUrl(composerDraft.sourceUrl),
           voiceAssets,
           lyricFile,
           scoreFile,
-        });
-        songCreated = true;
+        };
+
+        const savedSong = isSongEdit
+          ? await updateSongLibraryItem(songId, {
+              ...songPayload,
+              createdAt: existingSong?.createdAt || new Date(),
+            })
+          : await createSongLibraryItem({
+              ...songPayload,
+              id: songId,
+            });
+        songSaved = true;
+
+        if (replacedPaths.size > 0) {
+          await deleteStorageObjects([...replacedPaths]).catch(() => undefined);
+        }
 
         setSongs((current) => [
-          mapSongLibraryRecord(createdSong),
-          ...current.filter((song) => song.id !== createdSong.id),
+          mapSongLibraryRecord(savedSong),
+          ...current.filter((song) => song.id !== savedSong.id),
         ]);
         setActiveTab("songs");
         closeComposer();
-        setSongStatus("Música salva com sucesso.");
-        toast.success("Música salva com sucesso.", { id: songUploadToastId });
+        setSongStatus(isSongEdit ? "Música atualizada com sucesso." : "Música salva com sucesso.");
+        toast.success(isSongEdit ? "Música atualizada com sucesso." : "Música salva com sucesso.", { id: songUploadToastId });
 
         void fetchSongLibraryContent()
           .then((nextSongs) => {
@@ -1980,11 +2135,11 @@ export function HomePage({
           })
           .catch(() => undefined);
       } catch (error) {
-        if (!songCreated && uploadedPaths.length > 0) {
+        if (!songSaved && uploadedPaths.length > 0) {
           await deleteStorageObjects(uploadedPaths).catch(() => undefined);
         }
 
-        const message = extractOperationMessage(error, "Não foi possível salvar a música agora.");
+        const message = extractOperationMessage(error, isSongEdit ? "Não foi possível atualizar a música agora." : "Não foi possível salvar a música agora.");
         setSongStatus(message);
         toast.error(message, { id: songUploadToastId });
       } finally {
@@ -3257,6 +3412,19 @@ export function HomePage({
                         </div>
 
                         <div className="home-song-row-actions" onClick={(event) => event.stopPropagation()}>
+                          {song.createdByUid === currentUid ? (
+                            <button
+                              type="button"
+                              className="home-secondary-action compact"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                openSongComposer(song);
+                              }}
+                            >
+                              <FiEdit2 size={15} />
+                              Editar
+                            </button>
+                          ) : null}
                           {canRemoveManagedContent ? (
                             <button
                               type="button"
@@ -3816,7 +3984,7 @@ export function HomePage({
             <div className="home-modal-header">
               <div>
                 <p className="home-card-eyebrow">Criação rápida</p>
-                <h3>{composerMode === "agenda" ? "Novo evento da agenda" : composerMode === "song" ? "Nova música do repertório" : "Nova publicação do mural"}</h3>
+                <h3>{composerMode === "agenda" ? "Novo evento da agenda" : composerMode === "song" ? songEditTarget ? "Editar música carregada" : "Nova música do repertório" : "Nova publicação do mural"}</h3>
               </div>
               <button type="button" className="home-modal-close" onClick={closeComposer}>
                 Fechar
@@ -3875,8 +4043,11 @@ export function HomePage({
                 </div>
               ) : composerMode === "song" ? (
                 <div className="home-modal-form">
+                  {songEditTarget ? (
+                    <p className="home-inline-status">Você está atualizando uma música já enviada. Os arquivos que você não reenviar continuam vinculados ao repertório.</p>
+                  ) : null}
                   <div className="home-pill-row">
-                    {(["Clássicos", "Culto", "Ensaio", "Especial", "Outra"] as const).map((option) => (
+                    {SONG_CATEGORY_OPTIONS.map((option) => (
                       <button key={option} type="button" className={`home-pill-btn${composerDraft.songCategory === option ? " is-active" : ""}`} onClick={() => setComposerDraft((current) => ({ ...current, songCategory: option }))}>
                         {option}
                       </button>
@@ -3893,7 +4064,7 @@ export function HomePage({
                   <section className="home-upload-panel">
                     <div className="home-upload-section-header">
                       <strong>Áudio por voz</strong>
-                      <p>Envie um arquivo para cada naipe e, se quiser, uma faixa geral. No celular, o seletor pode usar o app Arquivos ou o provedor que o sistema disponibilizar.</p>
+                      <p>{songEditTarget ? "Substitua apenas as vozes que quiser atualizar. As faixas que você não reenviar permanecem no mesmo lugar." : "Envie um arquivo para cada naipe e, se quiser, uma faixa geral. No celular, o seletor pode usar o app Arquivos ou o provedor que o sistema disponibilizar."}</p>
                     </div>
                     <p className="home-upload-provider-note">Compatível com arquivos locais e provedores do sistema disponíveis no seletor do aparelho.</p>
                     {songPickerDebug ? <p className="home-inline-status">{songPickerDebug}</p> : null}
@@ -3901,17 +4072,24 @@ export function HomePage({
                       {SONG_VOICE_PARTS.map((voiceType) => {
                         const inputId = `song-voice-${normalizeComparableText(voiceType).replace(/[^a-z0-9]+/g, "-")}`;
                         const selectedFile = songVoiceFiles[voiceType];
+                        const existingVoiceAsset = songEditTarget?.voiceAssets.find((asset) => asset.voiceType === voiceType) || null;
 
                         return (
                           <article key={voiceType} className="home-upload-field-card">
                             <div>
                               <strong>{voiceType}</strong>
-                              <small>{selectedFile ? `${selectedFile.name} • ${formatStorageBytes(selectedFile.size)}` : "Nenhum áudio enviado."}</small>
+                              <small>
+                                {selectedFile
+                                  ? `${selectedFile.name} • ${formatStorageBytes(selectedFile.size)}`
+                                  : existingVoiceAsset
+                                    ? `Atual: ${existingVoiceAsset.name} • ${formatStorageBytes(existingVoiceAsset.sizeBytes)}`
+                                    : "Nenhum áudio enviado."}
+                              </small>
                             </div>
                             <div className="home-upload-field-actions">
                               <button type="button" className="home-secondary-action compact home-inline-label-btn" onClick={() => openSongVoiceLocalPicker(voiceType)}>
                                 <FiUpload size={15} />
-                                Arquivo
+                                {songEditTarget ? "Substituir" : "Arquivo"}
                               </button>
                               <input
                                 id={inputId}
@@ -3944,12 +4122,18 @@ export function HomePage({
                       <article className="home-upload-field-card">
                         <div>
                           <strong>Letra da música</strong>
-                          <small>{songLyricFile ? `${songLyricFile.name} • ${formatStorageBytes(songLyricFile.size)}` : "Nenhuma letra enviada."}</small>
+                          <small>
+                            {songLyricFile
+                              ? `${songLyricFile.name} • ${formatStorageBytes(songLyricFile.size)}`
+                              : songEditTarget?.lyricFile
+                                ? `Atual: ${songEditTarget.lyricFile.name} • ${formatStorageBytes(songEditTarget.lyricFile.sizeBytes)}`
+                                : "Nenhuma letra enviada."}
+                          </small>
                         </div>
                         <div className="home-upload-field-actions">
                           <button type="button" className="home-secondary-action compact home-inline-label-btn" onClick={() => openSongAttachmentLocalPicker("lyrics")}>
                             <FiUpload size={15} />
-                            Arquivo
+                            {songEditTarget ? "Substituir" : "Arquivo"}
                           </button>
                           <input
                             id="song-lyrics-upload"
@@ -3970,12 +4154,18 @@ export function HomePage({
                       <article className="home-upload-field-card">
                         <div>
                           <strong>Partitura opcional</strong>
-                          <small>{songScoreFile ? `${songScoreFile.name} • ${formatStorageBytes(songScoreFile.size)}` : "Nenhuma partitura enviada."}</small>
+                          <small>
+                            {songScoreFile
+                              ? `${songScoreFile.name} • ${formatStorageBytes(songScoreFile.size)}`
+                              : songEditTarget?.scoreFile
+                                ? `Atual: ${songEditTarget.scoreFile.name} • ${formatStorageBytes(songEditTarget.scoreFile.sizeBytes)}`
+                                : "Nenhuma partitura enviada."}
+                          </small>
                         </div>
                         <div className="home-upload-field-actions">
                           <button type="button" className="home-secondary-action compact home-inline-label-btn" onClick={() => openSongAttachmentLocalPicker("score")}>
                             <FiUpload size={15} />
-                            Arquivo
+                            {songEditTarget ? "Substituir" : "Arquivo"}
                           </button>
                           <input
                             id="song-score-upload"
@@ -4018,7 +4208,7 @@ export function HomePage({
                 Cancelar
               </button>
               <button type="button" className="home-primary-action" onClick={() => void publishComposerEntry()} disabled={composerSubmitting}>
-                {composerSubmitting ? "Salvando..." : composerMode === "song" ? "Adicionar música" : "Publicar"}
+                {composerSubmitting ? "Salvando..." : composerMode === "song" ? songEditTarget ? "Salvar alterações" : "Adicionar música" : "Publicar"}
               </button>
             </div>
           </div>
@@ -4051,6 +4241,28 @@ export function HomePage({
                 <span>{activeSong.tone ? `Tom ${activeSong.tone}` : "Tom livre"}</span>
                 <span>{activeSong.voiceAssets.length} faixa(s)</span>
               </div>
+
+                <div className="home-song-detail-actions">
+                  {canEditActiveSong ? (
+                    <button type="button" className="home-secondary-action compact" onClick={() => openSongComposer(activeSong)}>
+                      <FiEdit2 size={15} />
+                      Editar música
+                    </button>
+                  ) : null}
+                  {canDownloadSongMedia && selectedSongVoiceAsset ? (
+                    <button
+                      type="button"
+                      className="home-secondary-action compact"
+                      onClick={() => void downloadRemoteFile(selectedSongVoiceUrl, selectedSongVoiceAsset.name).catch((error) => {
+                        const message = error instanceof Error ? error.message : "Não foi possível baixar o arquivo agora.";
+                        toast.error(message);
+                      })}
+                    >
+                      <FiDownload size={15} />
+                      Baixar faixa
+                    </button>
+                  ) : null}
+                </div>
 
               {activeSong.notes ? <p className="home-song-screen-note">{activeSong.notes}</p> : null}
             </div>
@@ -4131,14 +4343,29 @@ export function HomePage({
                   <div className="home-song-document-preview-header">
                     <strong>Prévia interna</strong>
                     {selectedSongDocumentUrl ? (
-                      <button
-                        type="button"
-                        className="home-secondary-action compact"
-                        onClick={() => setIsSongDocumentExpanded(true)}
-                      >
-                        <FiEye size={15} />
-                        Expandir
-                      </button>
+                      <div className="home-song-document-preview-actions">
+                        {canDownloadSongMedia ? (
+                          <button
+                            type="button"
+                            className="home-secondary-action compact"
+                            onClick={() => void downloadRemoteFile(selectedSongDocumentUrl, selectedSongDocument?.name || activeSong.title).catch((error) => {
+                              const message = error instanceof Error ? error.message : "Não foi possível baixar o arquivo agora.";
+                              toast.error(message);
+                            })}
+                          >
+                            <FiDownload size={15} />
+                            Baixar arquivo
+                          </button>
+                        ) : null}
+                        <button
+                          type="button"
+                          className="home-secondary-action compact"
+                          onClick={() => setIsSongDocumentExpanded(true)}
+                        >
+                          <FiEye size={15} />
+                          Expandir
+                        </button>
+                      </div>
                     ) : null}
                   </div>
 

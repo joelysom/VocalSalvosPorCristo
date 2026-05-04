@@ -711,9 +711,11 @@ service cloud.firestore {
 			allow create: if canManageSongContent() &&
 				request.auth.uid == request.resource.data.createdByUid &&
 				hasValidSongLibraryData(songId);
-			allow update: if canManageSongContent() &&
+			allow update: if signedIn() &&
+				request.auth.uid == resource.data.createdByUid &&
 				hasValidSongLibraryData(songId) &&
-				request.resource.data.createdAt == resource.data.createdAt;
+				request.resource.data.createdAt == resource.data.createdAt &&
+				request.resource.data.createdByUid == resource.data.createdByUid;
 			allow delete: if canDeleteManagedContent();
 		}
 
